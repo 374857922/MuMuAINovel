@@ -2,13 +2,11 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Spin, Result, Button, Modal, Input, message } from 'antd';
 import { authApi } from '../services/api';
-import AnnouncementModal from '../components/AnnouncementModal';
 
 export default function AuthCallback() {
   const navigate = useNavigate();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState('');
-  const [showAnnouncement, setShowAnnouncement] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordStatus, setPasswordStatus] = useState<any>(null);
   const [newPassword, setNewPassword] = useState('');
@@ -21,13 +19,13 @@ export default function AuthCallback() {
         // 后端会通过 Cookie 自动设置认证信息
         // 这里只需要验证登录状态
         await authApi.getCurrentUser();
-        
+
         // 检查密码状态
         const pwdStatus = await authApi.getPasswordStatus();
         setPasswordStatus(pwdStatus);
-        
+
         setStatus('success');
-        
+
         // 只有在用户完全没有密码时才显示密码设置提示
         // 如果已经有密码（无论是默认密码还是自定义密码），都不再提示
         if (!pwdStatus.has_password) {
@@ -36,26 +34,15 @@ export default function AuthCallback() {
           }, 1000);
           return;
         }
-        
+
         // 从 sessionStorage 获取重定向地址
         const redirect = sessionStorage.getItem('login_redirect') || '/';
         sessionStorage.removeItem('login_redirect');
-        
-        // 检查今天是否已经显示过公告
-        const doNotShowUntil = localStorage.getItem('announcement_do_not_show_until');
-        const now = new Date().getTime();
-        
-        if (!doNotShowUntil || now > parseInt(doNotShowUntil)) {
-          // 延迟一下再显示公告，让用户看到成功提示
-          setTimeout(() => {
-            setShowAnnouncement(true);
-          }, 1000);
-        } else {
-          // 延迟一下再跳转，让用户看到成功提示
-          setTimeout(() => {
-            navigate(redirect);
-          }, 1000);
-        }
+
+        // 延迟一下再跳转，让用户看到成功提示
+        setTimeout(() => {
+          navigate(redirect);
+        }, 1000);
       } catch (error) {
         console.error('登录失败:', error);
         setStatus('error');
@@ -109,20 +96,6 @@ export default function AuthCallback() {
     );
   }
 
-  const handleAnnouncementClose = () => {
-    setShowAnnouncement(false);
-    const redirect = sessionStorage.getItem('login_redirect') || '/';
-    sessionStorage.removeItem('login_redirect');
-    navigate(redirect);
-  };
-
-  const handleDoNotShowToday = () => {
-    // 设置到今天23:59:59不再显示
-    const tomorrow = new Date();
-    tomorrow.setHours(23, 59, 59, 999);
-    localStorage.setItem('announcement_do_not_show_until', tomorrow.getTime().toString());
-  };
-
   const handleSetPassword = async () => {
     if (!newPassword) {
       message.error('请输入新密码');
@@ -142,23 +115,14 @@ export default function AuthCallback() {
       await authApi.setPassword(newPassword);
       message.success('密码设置成功');
       setShowPasswordModal(false);
-      
+
       // 继续后续流程
       const redirect = sessionStorage.getItem('login_redirect') || '/';
       sessionStorage.removeItem('login_redirect');
-      
-      const doNotShowUntil = localStorage.getItem('announcement_do_not_show_until');
-      const now = new Date().getTime();
-      
-      if (!doNotShowUntil || now > parseInt(doNotShowUntil)) {
-        setTimeout(() => {
-          setShowAnnouncement(true);
-        }, 500);
-      } else {
-        setTimeout(() => {
-          navigate(redirect);
-        }, 500);
-      }
+
+      setTimeout(() => {
+        navigate(redirect);
+      }, 500);
     } catch (error) {
       message.error('密码设置失败，请重试');
     } finally {
@@ -168,32 +132,17 @@ export default function AuthCallback() {
 
   const handleSkipPasswordSetting = () => {
     setShowPasswordModal(false);
-    
+
     // 继续后续流程
     const redirect = sessionStorage.getItem('login_redirect') || '/';
     sessionStorage.removeItem('login_redirect');
-    
-    const doNotShowUntil = localStorage.getItem('announcement_do_not_show_until');
-    const now = new Date().getTime();
-    
-    if (!doNotShowUntil || now > parseInt(doNotShowUntil)) {
-      setTimeout(() => {
-        setShowAnnouncement(true);
-      }, 500);
-    } else {
-      setTimeout(() => {
-        navigate(redirect);
-      }, 500);
-    }
+
+    setTimeout(() => {
+      navigate(redirect);
+    }, 500);
   };
 
   return (
-    <>
-      <AnnouncementModal
-        visible={showAnnouncement}
-        onClose={handleAnnouncementClose}
-        onDoNotShowToday={handleDoNotShowToday}
-      />
       
       <Modal
         title="设置账号密码"
@@ -260,10 +209,9 @@ export default function AuthCallback() {
         <Result
           status="success"
           title="登录成功"
-          subTitle={showPasswordModal ? "请设置账号密码..." : (showAnnouncement ? "欢迎使用..." : "正在跳转...")}
+          subTitle={showPasswordModal ? "请设置账号密码..." : "正在跳转..."}
           style={{ background: 'white', padding: 40, borderRadius: 8 }}
         />
       </div>
-    </>
   );
 }

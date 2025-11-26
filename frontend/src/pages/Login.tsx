@@ -3,7 +3,6 @@ import { Button, Card, Space, Typography, message, Spin, Form, Input, Tabs } fro
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { authApi } from '../services/api';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import AnnouncementModal from '../components/AnnouncementModal';
 
 const { Title, Paragraph } = Typography;
 
@@ -15,7 +14,6 @@ export default function Login() {
   const [localAuthEnabled, setLocalAuthEnabled] = useState(false);
   const [linuxdoEnabled, setLinuxdoEnabled] = useState(false);
   const [form] = Form.useForm();
-  const [showAnnouncement, setShowAnnouncement] = useState(false);
 
   // 检查是否已登录和获取认证配置
   useEffect(() => {
@@ -46,20 +44,11 @@ export default function Login() {
     try {
       setLoading(true);
       const response = await authApi.localLogin(values.username, values.password);
-      
+
       if (response.success) {
         message.success('登录成功！');
-        
-        // 检查今天是否已经显示过公告
-        const doNotShowUntil = localStorage.getItem('announcement_do_not_show_until');
-        const now = new Date().getTime();
-        
-        if (!doNotShowUntil || now > parseInt(doNotShowUntil)) {
-          setShowAnnouncement(true);
-        } else {
-          const redirect = searchParams.get('redirect') || '/';
-          navigate(redirect);
-        }
+        const redirect = searchParams.get('redirect') || '/';
+        navigate(redirect);
       }
     } catch (error) {
       console.error('本地登录失败:', error);
@@ -196,26 +185,7 @@ export default function Login() {
     </div>
   );
 
-  const handleAnnouncementClose = () => {
-    setShowAnnouncement(false);
-    const redirect = searchParams.get('redirect') || '/';
-    navigate(redirect);
-  };
-
-  const handleDoNotShowToday = () => {
-    // 设置到今天23:59:59不再显示
-    const tomorrow = new Date();
-    tomorrow.setHours(23, 59, 59, 999);
-    localStorage.setItem('announcement_do_not_show_until', tomorrow.getTime().toString());
-  };
-
   return (
-    <>
-      <AnnouncementModal
-        visible={showAnnouncement}
-        onClose={handleAnnouncementClose}
-        onDoNotShowToday={handleDoNotShowToday}
-      />
       <div style={{
       display: 'flex',
       justifyContent: 'center',
@@ -355,6 +325,5 @@ export default function Login() {
         </Space>
       </Card>
     </div>
-    </>
   );
 }
