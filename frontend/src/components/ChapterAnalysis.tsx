@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Modal, Progress, Spin, Alert, Tabs, Card, Tag, List, Empty, Statistic, Row, Col, Button } from 'antd';
+import { Modal, Spin, Alert, Tabs, Card, Tag, List, Empty, Statistic, Row, Col, Button } from 'antd';
 import {
   ThunderboltOutlined,
   BulbOutlined,
@@ -57,12 +57,9 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
     };
   }, [visible, chapterId]);
 
-  const fetchAnalysisStatus = async () => {
+  // 🔧 新增：独立的章节信息加载函数
+  const loadChapterInfo = async () => {
     try {
-      setLoading(true);
-      setError(null);
-      
-      // 同时获取章节信息
       const chapterResponse = await fetch(`/api/chapters/${chapterId}`);
       if (chapterResponse.ok) {
         const chapterData = await chapterResponse.json();
@@ -71,7 +68,20 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
           chapter_number: chapterData.chapter_number,
           content: chapterData.content || ''
         });
+        console.log('✅ 已刷新章节内容，字数:', chapterData.content?.length || 0);
       }
+    } catch (error) {
+      console.error('❌ 加载章节信息失败:', error);
+    }
+  };
+
+  const fetchAnalysisStatus = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // 🔧 使用独立的章节加载函数
+      await loadChapterInfo();
       
       const response = await fetch(`/api/chapters/${chapterId}/analysis/status`);
       
@@ -134,6 +144,8 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
         if (taskData.status === 'completed') {
           clearInterval(pollInterval);
           await fetchAnalysisResult();
+          // 🔧 分析完成后刷新章节内容，确保显示最新内容
+          await loadChapterInfo();
         } else if (taskData.status === 'failed') {
           clearInterval(pollInterval);
           setError(taskData.error_message || '分析失败');
@@ -151,6 +163,9 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
     try {
       setLoading(true);
       setError(null);
+      
+      // 🔧 触发分析前先刷新章节内容，确保分析的是最新内容
+      await loadChapterInfo();
       
       const response = await fetch(`/api/chapters/${chapterId}/analyze`, {
         method: 'POST'
@@ -192,27 +207,111 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
     if (!task || task.status === 'completed') return null;
     
     return (
-      <div style={{ padding: '24px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
+      <div style={{
+        padding: '40px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '300px'
+      }}>
+        {/* 标题和图标 */}
+        <div style={{
+          textAlign: 'center',
+          marginBottom: 32
+        }}>
           {renderStatusIcon()}
-          <span style={{ marginLeft: 8, fontSize: 16 }}>
+          <div style={{
+            fontSize: 20,
+            fontWeight: 'bold',
+            marginTop: 16,
+            color: task.status === 'failed' ? '#ff4d4f' : '#262626'
+          }}>
             {task.status === 'pending' && '等待分析...'}
             {task.status === 'running' && 'AI正在分析中...'}
             {task.status === 'failed' && '分析失败'}
-          </span>
+          </div>
         </div>
-        <Progress 
-          percent={task.progress} 
-          status={task.status === 'failed' ? 'exception' : 'active'}
-        />
+
+        {/* 进度条 */}
+        <div style={{
+          width: '100%',
+          maxWidth: '500px',
+          marginBottom: 16
+        }}>
+          <div style={{
+            height: 12,
+            background: '#f0f0f0',
+            borderRadius: 6,
+            overflow: 'hidden',
+            marginBottom: 12
+          }}>
+            <div style={{
+              height: '100%',
+              background: task.status === 'failed'
+                ? 'linear-gradient(90deg, #ff4d4f 0%, #ff7875 100%)'
+                : task.progress === 100
+                  ? 'linear-gradient(90deg, #52c41a 0%, #73d13d 100%)'
+                  : 'linear-gradient(90deg, #1890ff 0%, #40a9ff 100%)',
+              width: `${task.progress}%`,
+              transition: 'all 0.3s ease',
+              borderRadius: 6,
+              boxShadow: task.progress > 0 && task.status !== 'failed'
+                ? '0 0 10px rgba(24, 144, 255, 0.3)'
+                : 'none'
+            }} />
+          </div>
+          
+          {/* 进度百分比 */}
+          <div style={{
+            textAlign: 'center',
+            fontSize: 32,
+            fontWeight: 'bold',
+            color: task.status === 'failed' ? '#ff4d4f' :
+                   task.progress === 100 ? '#52c41a' : '#1890ff',
+            marginBottom: 8
+          }}>
+            {task.progress}%
+          </div>
+        </div>
+
+        {/* 状态消息 */}
+        <div style={{
+          textAlign: 'center',
+          fontSize: 16,
+          color: '#595959',
+          minHeight: 24,
+          marginBottom: 16
+        }}>
+          {task.status === 'pending' && '分析任务已创建，正在队列中...'}
+          {task.status === 'running' && '正在提取关键信息和记忆片段...'}
+        </div>
+
+        {/* 错误信息 */}
         {task.status === 'failed' && task.error_message && (
-          <Alert 
-            message="分析失败" 
-            description={task.error_message} 
-            type="error" 
-            showIcon 
-            style={{ marginTop: 16 }}
+          <Alert
+            message="分析失败"
+            description={task.error_message}
+            type="error"
+            showIcon
+            style={{
+              marginTop: 16,
+              maxWidth: '500px',
+              width: '100%'
+            }}
           />
+        )}
+
+        {/* 提示文字 */}
+        {task.status !== 'failed' && (
+          <div style={{
+            textAlign: 'center',
+            fontSize: 13,
+            color: '#8c8c8c',
+            marginTop: 16
+          }}>
+            分析过程需要一定时间，请耐心等待
+          </div>
         )}
       </div>
     );
@@ -646,9 +745,28 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
           originalContent={chapterInfo.content}
           newContent={newGeneratedContent}
           wordCount={newContentWordCount}
-          onApply={() => {
-            // 应用新内容后刷新章节信息
-            fetchAnalysisStatus();
+          onApply={async () => {
+            // 应用新内容后刷新章节信息和分析
+            setChapterInfo(null);
+            setAnalysis(null);
+            
+            // 重新加载章节内容
+            try {
+              const chapterResponse = await fetch(`/api/chapters/${chapterId}`);
+              if (chapterResponse.ok) {
+                const chapterData = await chapterResponse.json();
+                setChapterInfo({
+                  title: chapterData.title,
+                  chapter_number: chapterData.chapter_number,
+                  content: chapterData.content || ''
+                });
+              }
+            } catch (error) {
+              console.error('重新加载章节失败:', error);
+            }
+            
+            // 刷新分析状态
+            await fetchAnalysisStatus();
           }}
           onDiscard={() => {
             // 放弃新内容，清空状态

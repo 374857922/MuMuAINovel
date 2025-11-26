@@ -4,10 +4,109 @@ from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
 from app.config import settings as app_settings
 from app.logger import get_logger
+from app.mcp.adapters import UniversalMCPAdapter, PromptInjectionAdapter
 import httpx
 import json
+import hashlib
 
 logger = get_logger(__name__)
+
+# 全局HTTP客户端池（按配置复用）
+_http_client_pool: Dict[str, httpx.AsyncClient] = {}
+_client_pool_lock = False  # 简单的锁标志
+
+
+def _get_client_key(provider: str, base_url: Optional[str], api_key: str) -> str:
+    """生成HTTP客户端的唯一键
+    
+    Args:
+        provider: 提供商名称
+        base_url: API基础URL
+        api_key: API密钥（用于区分不同用户）
+        
+    Returns:
+        客户端唯一键
+    """
+    # 使用API密钥的哈希值（安全性）+ 提供商 + base_url 作为键
+    key_hash = hashlib.md5(api_key.encode()).hexdigest()[:8]
+    url_part = base_url or "default"
+    return f"{provider}_{url_part}_{key_hash}"
+
+
+def _get_or_create_http_client(
+    provider: str,
+    base_url: Optional[str],
+    api_key: str
+) -> httpx.AsyncClient:
+    """获取或创建HTTP客户端（复用连接）
+    
+    Args:
+        provider: 提供商名称
+        base_url: API基础URL
+        api_key: API密钥
+        
+    Returns:
+        httpx.AsyncClient实例
+    """
+    global _http_client_pool
+    
+    client_key = _get_client_key(provider, base_url, api_key)
+    
+    # 检查是否已存在
+    if client_key in _http_client_pool:
+        client = _http_client_pool[client_key]
+        # 检查客户端是否仍然有效
+        if not client.is_closed:
+            logger.debug(f"♻️ 复用HTTP客户端: {client_key}")
+            return client
+        else:
+            # 客户端已关闭，从池中移除
+            logger.warning(f"⚠️ HTTP客户端已关闭，重新创建: {client_key}")
+            del _http_client_pool[client_key]
+    
+    # 创建新客户端
+    limits = httpx.Limits(
+        max_keepalive_connections=50,  # 最大保持连接数
+        max_connections=100,  # 最大总连接数
+        keepalive_expiry=30.0  # 保持连接30秒
+    )
+    
+    client = httpx.AsyncClient(
+        timeout=httpx.Timeout(
+            connect=90.0,  # 连接超时
+            read=300.0,  # 读取超时
+            write=90.0,  # 写入超时
+            pool=90.0  # 连接池超时
+        ),
+        limits=limits,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+    )
+    
+    # 添加到池中
+    _http_client_pool[client_key] = client
+    logger.info(f"✅ 创建新HTTP客户端并加入池: {client_key} (池大小: {len(_http_client_pool)})")
+    
+    return client
+
+
+async def cleanup_http_clients():
+    """清理所有HTTP客户端（应用关闭时调用）"""
+    global _http_client_pool
+    
+    logger.info(f"🧹 开始清理HTTP客户端池 (共 {len(_http_client_pool)} 个客户端)")
+    
+    for key, client in list(_http_client_pool.items()):
+        try:
+            if not client.is_closed:
+                await client.aclose()
+                logger.debug(f"✅ 关闭HTTP客户端: {key}")
+        except Exception as e:
+            logger.error(f"❌ 关闭HTTP客户端失败 {key}: {e}")
+    
+    _http_client_pool.clear()
+    logger.info("✅ HTTP客户端池清理完成")
 
 
 class AIService:
@@ -20,7 +119,8 @@ class AIService:
         api_base_url: Optional[str] = None,
         default_model: Optional[str] = None,
         default_temperature: Optional[float] = None,
-        default_max_tokens: Optional[int] = None
+        default_max_tokens: Optional[int] = None,
+        enable_mcp_adapter: bool = True
     ):
         """
         初始化AI客户端（优化并发性能）
@@ -39,30 +139,29 @@ class AIService:
         self.default_temperature = default_temperature or app_settings.default_temperature
         self.default_max_tokens = default_max_tokens or app_settings.default_max_tokens
         
-        # 初始化OpenAI客户端
+        # 初始化MCP适配器
+        self.enable_mcp_adapter = enable_mcp_adapter
+        if enable_mcp_adapter:
+            self.mcp_adapter = UniversalMCPAdapter()
+            logger.info("✅ MCP通用适配器已启用")
+        else:
+            self.mcp_adapter = None
+            logger.info("⚠️ MCP适配器已禁用")
+        
+        # 初始化OpenAI客户端（使用HTTP客户端池）
         openai_key = api_key if api_provider == "openai" else app_settings.openai_api_key
         if openai_key:
             try:
-                limits = httpx.Limits(
-                    max_keepalive_connections=50,
-                    max_connections=100,
-                    keepalive_expiry=30.0
-                )
+                base_url = api_base_url if api_provider == "openai" else app_settings.openai_base_url
                 
-                http_client = httpx.AsyncClient(
-                    timeout=httpx.Timeout(connect=60.0, read=180.0, write=60.0, pool=60.0),
-                    limits=limits,
-                    headers={
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                    }
-                )
+                # 从池中获取或创建HTTP客户端（复用连接）
+                http_client = _get_or_create_http_client("openai", base_url, openai_key)
                 
                 client_kwargs = {
                     "api_key": openai_key,
                     "http_client": http_client
                 }
                 
-                base_url = api_base_url if api_provider == "openai" else app_settings.openai_base_url
                 if base_url:
                     client_kwargs["base_url"] = base_url
                 
@@ -70,7 +169,7 @@ class AIService:
                 self.openai_http_client = http_client
                 self.openai_api_key = openai_key
                 self.openai_base_url = base_url
-                logger.info("✅ OpenAI客户端初始化成功")
+                logger.info("✅ OpenAI客户端初始化成功（复用HTTP连接）")
             except Exception as e:
                 logger.error(f"OpenAI客户端初始化失败: {e}")
                 self.openai_client = None
@@ -86,35 +185,25 @@ class AIService:
             if self.api_provider == "openai":
                 logger.warning("⚠️ OpenAI API key未配置，但被设置为当前AI提供商")
         
-        # 初始化Anthropic客户端
+        # 初始化Anthropic客户端（使用HTTP客户端池）
         anthropic_key = api_key if api_provider == "anthropic" else app_settings.anthropic_api_key
         if anthropic_key:
             try:
-                limits = httpx.Limits(
-                    max_keepalive_connections=50,
-                    max_connections=100,
-                    keepalive_expiry=30.0
-                )
+                base_url = api_base_url if api_provider == "anthropic" else app_settings.anthropic_base_url
                 
-                http_client = httpx.AsyncClient(
-                    timeout=httpx.Timeout(connect=60.0, read=180.0, write=60.0, pool=60.0),
-                    limits=limits,
-                    headers={
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                    }
-                )
+                # 从池中获取或创建HTTP客户端（复用连接）
+                http_client = _get_or_create_http_client("anthropic", base_url, anthropic_key)
                 
                 client_kwargs = {
                     "api_key": anthropic_key,
                     "http_client": http_client
                 }
                 
-                base_url = api_base_url if api_provider == "anthropic" else app_settings.anthropic_base_url
                 if base_url:
                     client_kwargs["base_url"] = base_url
                 
                 self.anthropic_client = AsyncAnthropic(**client_kwargs)
-                logger.info("✅ Anthropic客户端初始化成功")
+                logger.info("✅ Anthropic客户端初始化成功（复用HTTP连接）")
             except Exception as e:
                 logger.error(f"Anthropic客户端初始化失败: {e}")
                 self.anthropic_client = None
@@ -318,7 +407,7 @@ class AIService:
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[str] = None
     ) -> Dict[str, Any]:
-        """使用OpenAI生成文本（支持工具调用）"""
+        """使用OpenAI生成文本（支持工具调用，集成MCP适配器）"""
         if not self.openai_http_client:
             raise ValueError("OpenAI客户端未初始化，请检查API key配置")
         
@@ -327,8 +416,101 @@ class AIService:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
         
+        # 如果启用了MCP适配器且有工具，使用适配器处理
+        if self.enable_mcp_adapter and self.mcp_adapter and tools:
+            logger.info(f"🎯 使用MCP适配器处理工具调用")
+            
+            # 生成API标识符
+            api_identifier = f"openai_{self.openai_base_url or 'default'}"
+            
+            # 定义API调用函数
+            async def call_api(message: str, tools_param: Optional[List] = None, tool_choice_param: Optional[str] = None):
+                """实际调用OpenAI API的函数"""
+                call_messages = messages.copy()
+                call_messages[-1]["content"] = message
+                
+                url = f"{self.openai_base_url}/chat/completions"
+                headers = {
+                    "Authorization": f"Bearer {self.openai_api_key}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": model,
+                    "messages": call_messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens
+                }
+                
+                # 只在tools_param不为None时添加工具参数
+                if tools_param is not None:
+                    # 清理工具定义，移除$schema字段（某些API不支持）
+                    cleaned_tools = []
+                    for tool in tools_param:
+                        cleaned_tool = tool.copy()
+                        if "function" in cleaned_tool and "parameters" in cleaned_tool["function"]:
+                            params = cleaned_tool["function"]["parameters"].copy()
+                            # 移除$schema字段
+                            params.pop("$schema", None)
+                            cleaned_tool["function"]["parameters"] = params
+                        cleaned_tools.append(cleaned_tool)
+                    
+                    payload["tools"] = cleaned_tools
+                    if tool_choice_param:
+                        payload["tool_choice"] = tool_choice_param
+                
+                response = await self.openai_http_client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                return response.json()
+            
+            # 定义测试函数（检测API是否支持Function Calling）
+            async def test_fc():
+                """测试Function Calling支持"""
+                test_tools = [{
+                    "type": "function",
+                    "function": {
+                        "name": "test_function",
+                        "description": "测试函数",
+                        "parameters": {"type": "object", "properties": {}}
+                    }
+                }]
+                try:
+                    result = await call_api("测试", tools_param=test_tools, tool_choice_param="none")
+                    return result
+                except Exception as e:
+                    logger.debug(f"Function Calling测试失败: {e}")
+                    raise
+            
+            try:
+                # 使用适配器处理（自动检测、降级、缓存）
+                result = await self.mcp_adapter.call_with_fallback(
+                    api_identifier=api_identifier,
+                    tools=tools,
+                    user_message=prompt,
+                    call_function=call_api,
+                    test_function=test_fc
+                )
+                
+                # 转换结果格式
+                if result.has_tool_calls:
+                    return {
+                        "tool_calls": result.tool_calls,
+                        "content": result.raw_response,
+                        "finish_reason": "tool_calls"
+                    }
+                else:
+                    return {
+                        "content": result.raw_response,
+                        "finish_reason": "stop"
+                    }
+                    
+            except Exception as e:
+                logger.error(f"❌ MCP适配器调用失败: {str(e)}")
+                # 降级到原始实现
+                logger.warning("⚠️ 降级到原始OpenAI调用")
+        
+        # 原始实现（无适配器或降级）
         try:
-            logger.info(f"🔵 开始调用OpenAI API（支持工具调用）")
+            logger.info(f"🔵 开始调用OpenAI API（原始模式）")
             logger.info(f"  - 模型: {model}")
             logger.info(f"  - 工具数量: {len(tools) if tools else 0}")
             
@@ -777,7 +959,7 @@ class AIService:
         
         else:
             # 达到最大轮次
-            logger.warning(f"达到MCP最大调用轮次 {max_tool_rounds}")
+            logger.info(f"达到MCP最大调用轮次 {max_tool_rounds}")
             result["content"] = conversation_history[-1].get("content", "")
             result["finish_reason"] = "max_rounds"
         
