@@ -14,6 +14,8 @@ import Chapters from './pages/Chapters';
 import ChapterReader from './pages/ChapterReader';
 import ChapterAnalysis from './pages/ChapterAnalysis';
 import WritingStyles from './pages/WritingStyles';
+import { ConflictDetection } from './pages_new/ConflictDetection';
+import { ChapterGraph } from './pages_new/ChapterGraph';
 import Settings from './pages/Settings';
 import MCPPlugins from './pages/MCPPlugins';
 import UserManagement from './pages/UserManagement';
@@ -21,7 +23,6 @@ import UserManagement from './pages/UserManagement';
 import Login from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
 import ProtectedRoute from './components/ProtectedRoute';
-import AppFooter from './components/AppFooter';
 import './App.css';
 
 function App() {
@@ -34,11 +35,11 @@ function App() {
         }}
       >
         <Routes>
-          <Route path="/login" element={<><Login /><AppFooter /></>} />
+          <Route path="/login" element={<Login />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
-          
-          <Route path="/" element={<ProtectedRoute><><ProjectList /><AppFooter /></></ProtectedRoute>} />
-          <Route path="/projects" element={<ProtectedRoute><><ProjectList /><AppFooter /></></ProtectedRoute>} />
+
+          <Route path="/" element={<ProtectedRoute><ProjectList /></ProtectedRoute>} />
+          <Route path="/projects" element={<ProtectedRoute><ProjectList /></ProtectedRoute>} />
           <Route path="/wizard" element={<ProtectedRoute><ProjectWizardNew /></ProtectedRoute>} />
           <Route path="/inspiration" element={<ProtectedRoute><Inspiration /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
@@ -54,6 +55,8 @@ function App() {
             <Route path="organizations" element={<Organizations />} />
             <Route path="chapters" element={<Chapters />} />
             <Route path="chapter-analysis" element={<ChapterAnalysis />} />
+            <Route path="conflict-detection" element={<ConflictDetection />} />
+            <Route path="chapter-graph" element={<ChapterGraph />} />
             <Route path="writing-styles" element={<WritingStyles />} />
             {/* <Route path="polish" element={<Polish />} /> */}
           </Route>

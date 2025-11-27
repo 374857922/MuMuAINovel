@@ -153,17 +153,20 @@ class AIService:
         if openai_key:
             try:
                 base_url = api_base_url if api_provider == "openai" else app_settings.openai_base_url
+                # 默认使用 OpenAI 官方 API 地址
+                if not base_url:
+                    base_url = "https://api.openai.com/v1"
+                # 确保 URL 没有尾部斜杠
+                base_url = base_url.rstrip("/")
                 
                 # 从池中获取或创建HTTP客户端（复用连接）
                 http_client = _get_or_create_http_client("openai", base_url, openai_key)
                 
                 client_kwargs = {
                     "api_key": openai_key,
-                    "http_client": http_client
+                    "http_client": http_client,
+                    "base_url": base_url
                 }
-                
-                if base_url:
-                    client_kwargs["base_url"] = base_url
                 
                 self.openai_client = AsyncOpenAI(**client_kwargs)
                 self.openai_http_client = http_client

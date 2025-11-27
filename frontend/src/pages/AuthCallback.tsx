@@ -143,7 +143,7 @@ export default function AuthCallback() {
   };
 
   return (
-      
+    <>
       <Modal
         title="设置账号密码"
         open={showPasswordModal}
@@ -213,5 +213,6 @@ export default function AuthCallback() {
           style={{ background: 'white', padding: 40, borderRadius: 8 }}
         />
       </div>
+    </>
   );
 }

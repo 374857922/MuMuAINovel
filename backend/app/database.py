@@ -23,6 +23,8 @@ from app.models import (
     StoryMemory, PlotAnalysis, AnalysisTask, BatchGenerationTask,
     RegenerationTask
 )
+# 导入新功能模型（设定追溯与矛盾检测、章节关系图谱）
+from app.models_new import EntitySnapshot, Conflict, ChapterLink, ThinkingChain
 
 # 引擎缓存：每个用户一个引擎
 _engine_cache: Dict[str, Any] = {}

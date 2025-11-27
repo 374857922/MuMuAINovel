@@ -697,3 +697,69 @@ export const adminApi = {
       message: string;
     }>(`/admin/users/${userId}`),
 };
+
+// 矛盾检测 API
+export const conflictApi = {
+  // 提取实体设定
+  extractEntities: (projectId: string, params?: { 
+    mode?: 'incremental' | 'full';
+    ai_provider?: string; 
+    ai_model?: string 
+  }) =>
+    api.post(`/conflicts/extract/${projectId}`, null, { params }),
+  
+  // 检测矛盾
+  detectConflicts: (projectId: string, params?: { clear_existing?: boolean; use_ai?: boolean }) =>
+    api.post(`/conflicts/detect/${projectId}`, null, { params }),
+  
+  // 获取矛盾列表
+  getConflicts: (projectId: string, params?: { severity?: string; status?: string; entity_id?: string }) =>
+    api.get(`/conflicts/${projectId}`, { params }),
+  
+  // 获取矛盾详情
+  getConflictDetail: (conflictId: string) =>
+    api.get(`/conflicts/detail/${conflictId}`),
+  
+  // 解决矛盾
+  resolveConflict: (conflictId: string, resolution: string) =>
+    api.post(`/conflicts/resolve/${conflictId}`, { resolution }),
+  
+  // 忽略矛盾
+  ignoreConflict: (conflictId: string) =>
+    api.post(`/conflicts/ignore/${conflictId}`),
+  
+  // 获取实体设定
+  getEntitySnapshots: (projectId: string, entityId: string) =>
+    api.get(`/conflicts/entity/${projectId}/${entityId}`),
+};
+
+// 章节关系图谱 API
+export const chapterGraphApi = {
+  // 分析章节关系
+  analyzeRelationships: (projectId: string) =>
+    api.post(`/chapter-graph/analyze/${projectId}`),
+  
+  // 获取关系列表
+  getLinks: (projectId: string, params?: { chapter_id?: string; link_type?: string; limit?: number }) =>
+    api.get(`/chapter-graph/links/${projectId}`, { params }),
+  
+  // 获取图谱数据
+  getGraphData: (projectId: string, params?: { min_importance?: number; exclude_types?: string }) =>
+    api.get(`/chapter-graph/graph/${projectId}`, { params }),
+  
+  // 获取章节重要性
+  getChapterImportance: (projectId: string, chapterId: string) =>
+    api.get(`/chapter-graph/importance/${projectId}/${chapterId}`),
+  
+  // 获取思维链
+  getThinkingChain: (chapterId: string, chainType?: string) =>
+    api.get(`/chapter-graph/thinking-chain/${chapterId}`, { params: { chain_type: chainType } }),
+  
+  // 获取统计信息
+  getStats: (projectId: string) =>
+    api.get(`/chapter-graph/stats/${projectId}`),
+  
+  // 查找关系路径
+  findPath: (projectId: string, fromChapterId: string, toChapterId: string, maxHops?: number) =>
+    api.get(`/chapter-graph/path/${projectId}/${fromChapterId}/${toChapterId}`, { params: { max_hops: maxHops } }),
+};

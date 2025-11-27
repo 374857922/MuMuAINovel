@@ -14,6 +14,8 @@ import {
   BankOutlined,
   EditOutlined,
   FundOutlined,
+  BugOutlined,
+  RadarChartOutlined,
 } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useCharacterSync, useOutlineSync, useChapterSync } from '../store/hooks';
@@ -129,6 +131,16 @@ export default function ProjectDetail() {
       label: <Link to={`/project/${projectId}/chapter-analysis`}>剧情分析</Link>,
     },
     {
+      key: 'conflict-detection',
+      icon: <BugOutlined />,
+      label: <Link to={`/project/${projectId}/conflict-detection`}>矛盾检测</Link>,
+    },
+    {
+      key: 'chapter-graph',
+      icon: <RadarChartOutlined />,
+      label: <Link to={`/project/${projectId}/chapter-graph`}>章节图谱</Link>,
+    },
+    {
       key: 'writing-styles',
       icon: <EditOutlined />,
       label: <Link to={`/project/${projectId}/writing-styles`}>写作风格</Link>,
@@ -149,6 +161,8 @@ export default function ProjectDetail() {
     if (path.includes('/outline')) return 'outline';
     if (path.includes('/characters')) return 'characters';
     if (path.includes('/chapter-analysis')) return 'chapter-analysis';
+    if (path.includes('/conflict-detection')) return 'conflict-detection';
+    if (path.includes('/chapter-graph')) return 'chapter-graph';
     if (path.includes('/chapters')) return 'chapters';
     if (path.includes('/writing-styles')) return 'writing-styles';
     // if (path.includes('/polish')) return 'polish';
