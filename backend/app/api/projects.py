@@ -3,9 +3,10 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
-from typing import List
+from typing import List, Optional
 import json
 from urllib.parse import quote
+from pydantic import BaseModel
 from app.database import get_db
 from app.models.project import Project
 from app.models.character import Character
@@ -718,14 +719,14 @@ async def import_project(
         
         # 导入数据（传入user_id）
         import_result = await ImportExportService.import_project(data, db, user_id)
-        
+
         if import_result.success:
             logger.info(f"项目导入成功: {import_result.project_id}")
         else:
             logger.warning(f"项目导入失败: {import_result.message}")
-        
+
         return import_result
-        
+
     except HTTPException:
         raise
     except Exception as e:

@@ -1,14 +1,15 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, Tooltip, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, FloatButton } from 'antd';
-import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined } from '@ant-design/icons';
+import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, HistoryOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useChapterSync } from '../store/hooks';
-import { projectApi, writingStyleApi } from '../services/api';
+import { projectApi, writingStyleApi, chapterApi } from '../services/api';
 import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData } from '../types';
 import ChapterAnalysis from '../components/ChapterAnalysis';
 import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
 import { SSEProgressModal } from '../components/SSEProgressModal';
 import FloatingIndexPanel from '../components/FloatingIndexPanel';
+import { ChapterHistoryModal } from '../components/ChapterHistoryModal';
 
 const { TextArea } = Input;
 
@@ -36,6 +37,7 @@ export default function Chapters() {
   // 单章节生成进度状态
   const [singleChapterProgress, setSingleChapterProgress] = useState(0);
   const [singleChapterProgressMessage, setSingleChapterProgressMessage] = useState('');
+  const [historyModalVisible, setHistoryModalVisible] = useState(false);
   
   // 批量生成相关状态
   const [batchGenerateVisible, setBatchGenerateVisible] = useState(false);
@@ -1457,8 +1459,15 @@ export default function Chapters() {
           </Form.Item>
 
           <Form.Item>
-            <Space style={{ width: '100%', justifyContent: 'flex-end', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'center' }}>
-              <Space style={{ width: isMobile ? '100%' : 'auto' }}>
+            <Space style={{ width: '100%', justifyContent: 'space-between', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'center' }}>
+              <Button
+                icon={<HistoryOutlined />}
+                onClick={() => setHistoryModalVisible(true)}
+                disabled={isGenerating}
+              >
+                历史版本
+              </Button>
+              <Space style={{ width: isMobile ? '100%' : 'auto', justifyContent: 'flex-end' }}>
                 <Button
                   onClick={() => {
                     if (isGenerating) {
@@ -1485,6 +1494,29 @@ export default function Chapters() {
           </Form.Item>
         </Form>
       </Modal>
+      
+      {editingId && (
+        <ChapterHistoryModal
+          chapterId={editingId}
+          visible={historyModalVisible}
+          onClose={() => setHistoryModalVisible(false)}
+          onRestoreSuccess={async () => {
+            if (editingId) {
+              try {
+                const updatedChapter = await chapterApi.getChapter(editingId);
+                editorForm.setFieldsValue({
+                  content: updatedChapter.content,
+                });
+                // 同时刷新列表
+                refreshChapters();
+                message.success('已加载历史版本内容');
+              } catch (error) {
+                message.error('刷新章节内容失败');
+              }
+            }
+          }}
+        />
+      )}
 
       {analysisChapterId && (
         <ChapterAnalysis

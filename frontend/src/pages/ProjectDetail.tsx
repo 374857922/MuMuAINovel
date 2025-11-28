@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, Outlet, Link, useLocation } from 'react-router-dom';
-import { Layout, Menu, Spin, Button, Statistic, Row, Col, Card, Drawer } from 'antd';
+import { Layout, Menu, Spin, Button, Statistic, Row, Col, Card, Drawer, Modal, Space, Input, message, List, Empty, Tag, Tooltip } from 'antd';
 import {
   ArrowLeftOutlined,
   FileTextOutlined,
@@ -16,10 +16,12 @@ import {
   FundOutlined,
   BugOutlined,
   RadarChartOutlined,
+  ClockCircleOutlined,
 } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useCharacterSync, useOutlineSync, useChapterSync } from '../store/hooks';
 import { projectApi } from '../services/api';
+import api from '../services/api';
 
 const { Header, Sider, Content } = Layout;
 
@@ -33,7 +35,6 @@ export default function ProjectDetail() {
   const [collapsed, setCollapsed] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [mobile, setMobile] = useState(isMobile());
-
   // 监听窗口大小变化
   useEffect(() => {
     const handleResize = () => {
@@ -145,11 +146,10 @@ export default function ProjectDetail() {
       icon: <EditOutlined />,
       label: <Link to={`/project/${projectId}/writing-styles`}>写作风格</Link>,
     },
-    // {
-    //   key: 'polish',
-    //   icon: <ToolOutlined />,
-    //   label: <Link to={`/project/${projectId}/polish`}>AI去味</Link>,
-    // },
+    {
+      type: 'divider' as const,
+      style: { margin: '8px 0' },
+    },
   ];
 
   // 根据当前路径动态确定选中的菜单项
@@ -159,49 +159,36 @@ export default function ProjectDetail() {
     if (path.includes('/relationships')) return 'relationships';
     if (path.includes('/organizations')) return 'organizations';
     if (path.includes('/outline')) return 'outline';
+    if (path.includes('/chapters')) return 'chapters';
     if (path.includes('/characters')) return 'characters';
     if (path.includes('/chapter-analysis')) return 'chapter-analysis';
     if (path.includes('/conflict-detection')) return 'conflict-detection';
     if (path.includes('/chapter-graph')) return 'chapter-graph';
-    if (path.includes('/chapters')) return 'chapters';
     if (path.includes('/writing-styles')) return 'writing-styles';
-    // if (path.includes('/polish')) return 'polish';
-    return 'world-setting'; // 默认选中世界设定
+    return 'outline';
   }, [location.pathname]);
 
   if (loading || !currentProject) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <Spin size="large" />
-      </div>
+      <Layout style={{
+        height: '100vh',
+        background: 'linear-gradient(135deg, #0f172a, #1e293b)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}>
+        <Spin size="large" tip="加载项目中..." fullscreen />
+      </Layout>
     );
   }
 
-  // 渲染菜单内容
-  const renderMenu = () => (
-    <div style={{
-      flex: 1,
-      overflowY: 'auto',
-      overflowX: 'hidden'
-    }}>
-      <Menu
-        mode="inline"
-        selectedKeys={[selectedKey]}
-        style={{
-          borderRight: 0,
-          paddingTop: '16px'
-        }}
-        items={menuItems}
-        onClick={() => mobile && setDrawerVisible(false)}
-      />
-    </div>
-  );
-
   return (
-    <Layout style={{ minHeight: '100vh', height: '100vh', overflow: 'hidden' }}>
+    <Layout style={{
+      height: '100vh',
+      background: 'linear-gradient(135deg, #0f172a, #1e293b)',
+      overflow: 'hidden'
+    }}>
       <Header style={{
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-        padding: mobile ? '0 12px' : '0 24px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -211,7 +198,11 @@ export default function ProjectDetail() {
         right: 0,
         zIndex: 1000,
         boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-        height: mobile ? 56 : 70
+        height: mobile ? 56 : 70,
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        paddingLeft: mobile ? '12px' : '24px',
+        paddingRight: mobile ? '12px' : '24px',
+        backdropFilter: 'blur(10px)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', zIndex: 1 }}>
           <Button
@@ -241,7 +232,7 @@ export default function ProjectDetail() {
             </Button>
           )}
         </div>
-        
+
         <h2 style={{
           margin: 0,
           color: '#fff',
@@ -254,174 +245,118 @@ export default function ProjectDetail() {
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
-          flex: mobile ? 1 : 'none',
-          textAlign: mobile ? 'center' : 'left',
-          paddingLeft: mobile ? '8px' : '0',
-          paddingRight: mobile ? '8px' : '0'
-        }}>
-          {currentProject.title}
-        </h2>
-        
-        {mobile && (
-          <Button
-            type="text"
-            icon={<ArrowLeftOutlined />}
-            onClick={() => navigate('/')}
-            style={{
-              fontSize: '14px',
-              color: '#fff',
-              height: '36px',
-              padding: '0 8px',
-              zIndex: 1
-            }}
-          >
-            主页
-          </Button>
-        )}
-        
+          maxWidth: mobile ? '200px' : '400px',
+          textAlign: 'center'
+        }}>{currentProject.title}</h2>
+
         {!mobile && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', zIndex: 1 }}>
-            <Row gutter={12} style={{ width: '450px', justifyContent: 'flex-end' }}>
-            <Col>
-              <Card
-                size="small"
-                style={{
-                  background: 'rgba(255,255,255,0.95)',
-                  borderRadius: '6px',
-                  border: 'none',
-                  minWidth: '80px',
-                  textAlign: 'center',
-                  padding: '4px 8px'
-                }}
-                styles={{ body: { padding: '8px' } }}
-              >
-                <Statistic
-                  title={<span style={{ fontSize: '11px', color: '#666' }}>大纲</span>}
-                  value={outlines.length}
-                  suffix="条"
-                  valueStyle={{ fontSize: '16px', fontWeight: 600, color: '#667eea' }}
-                />
-              </Card>
-            </Col>
-            <Col>
-              <Card
-                size="small"
-                style={{
-                  background: 'rgba(255,255,255,0.95)',
-                  borderRadius: '6px',
-                  border: 'none',
-                  minWidth: '80px',
-                  textAlign: 'center',
-                  padding: '4px 8px'
-                }}
-                styles={{ body: { padding: '8px' } }}
-              >
-                <Statistic
-                  title={<span style={{ fontSize: '11px', color: '#666' }}>角色</span>}
-                  value={characters.length}
-                  suffix="个"
-                  valueStyle={{ fontSize: '16px', fontWeight: 600, color: '#52c41a' }}
-                />
-              </Card>
-            </Col>
-            <Col>
-              <Card
-                size="small"
-                style={{
-                  background: 'rgba(255,255,255,0.95)',
-                  borderRadius: '6px',
-                  border: 'none',
-                  minWidth: '80px',
-                  textAlign: 'center',
-                  padding: '4px 8px'
-                }}
-                styles={{ body: { padding: '8px' } }}
-              >
-                <Statistic
-                  title={<span style={{ fontSize: '11px', color: '#666' }}>章节</span>}
-                  value={chapters.length}
-                  suffix="章"
-                  valueStyle={{ fontSize: '16px', fontWeight: 600, color: '#1890ff' }}
-                />
-              </Card>
-            </Col>
-            <Col>
-              <Card
-                size="small"
-                style={{
-                  background: 'rgba(255,255,255,0.95)',
-                  borderRadius: '6px',
-                  border: 'none',
-                  minWidth: '80px',
-                  textAlign: 'center',
-                  padding: '4px 8px'
-                }}
-                styles={{ body: { padding: '8px' } }}
-              >
-                <Statistic
-                  title={<span style={{ fontSize: '11px', color: '#666' }}>已写</span>}
-                  value={currentProject.current_words}
-                  suffix="字"
-                  valueStyle={{ fontSize: '16px', fontWeight: 600, color: '#fa8c16' }}
-                />
-              </Card>
-            </Col>
+            <Row gutter={12} style={{ width: 450, justifyContent: 'flex-end' }}>
+              <Col>
+                <Card size="small" variant="borderless" styles={{ body: { padding: 8 } }} style={{ background: 'rgba(255,255,255,0.95)', borderRadius: 6, minWidth: 80, textAlign: 'center' }}>
+                  <Statistic 
+                    title={<span style={{ fontSize: 11, color: '#666' }}>大纲</span>}
+                    value={outlines.length} 
+                    suffix="条"
+                    valueStyle={{ fontSize: 16, fontWeight: 600, color: '#667eea' }} 
+                  />
+                </Card>
+              </Col>
+              <Col>
+                <Card size="small" variant="borderless" styles={{ body: { padding: 8 } }} style={{ background: 'rgba(255,255,255,0.95)', borderRadius: 6, minWidth: 80, textAlign: 'center' }}>
+                  <Statistic 
+                    title={<span style={{ fontSize: 11, color: '#666' }}>角色</span>}
+                    value={characters.length} 
+                    suffix="个"
+                    valueStyle={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }} 
+                  />
+                </Card>
+              </Col>
+              <Col>
+                <Card size="small" variant="borderless" styles={{ body: { padding: 8 } }} style={{ background: 'rgba(255,255,255,0.95)', borderRadius: 6, minWidth: 80, textAlign: 'center' }}>
+                  <Statistic 
+                    title={<span style={{ fontSize: 11, color: '#666' }}>章节</span>}
+                    value={chapters.length} 
+                    suffix="章"
+                    valueStyle={{ fontSize: 16, fontWeight: 600, color: '#1890ff' }} 
+                  />
+                </Card>
+              </Col>
+              <Col>
+                <Card size="small" variant="borderless" styles={{ body: { padding: 8 } }} style={{ background: 'rgba(255,255,255,0.95)', borderRadius: 6, minWidth: 80, textAlign: 'center' }}>
+                  <Statistic 
+                    title={<span style={{ fontSize: 11, color: '#666' }}>已写</span>}
+                    value={currentProject.current_words} 
+                    suffix="字"
+                    valueStyle={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }} 
+                  />
+                </Card>
+              </Col>
             </Row>
           </div>
         )}
       </Header>
 
-      <Layout style={{ marginTop: mobile ? 56 : 70 }}>
-        {mobile ? (
-          <Drawer
-            title="导航菜单"
-            placement="left"
-            onClose={() => setDrawerVisible(false)}
-            open={drawerVisible}
-            width={280}
-            styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
-          >
-            {renderMenu()}
-          </Drawer>
-        ) : (
+      <Layout style={{ 
+        height: '100vh', 
+        overflow: 'hidden', 
+        paddingTop: mobile ? 56 : 86 
+      }}>
+        {!mobile ? (
           <Sider
-          collapsible
-          collapsed={collapsed}
-          onCollapse={setCollapsed}
-          trigger={null}
-          width={220}
-          collapsedWidth={60}
-          style={{
-            background: '#fff',
-            position: 'fixed',
-            left: 0,
-            top: 70,
-            bottom: 0,
-            overflow: 'hidden',
-            boxShadow: '2px 0 12px rgba(0,0,0,0.08)',
-            transition: 'all 0.2s',
-            height: 'calc(100vh - 70px)'
-          }}
+            width={collapsed ? 60 : 220}
+            collapsed={collapsed}
+            collapsible
+            trigger={null}
+            style={{
+              backgroundColor: 'transparent',
+              boxShadow: mobile ? 'none' : '2px 0 8px rgba(0,0,0,0.05)',
+              overflow: 'hidden',
+              marginLeft: 24,
+              borderRadius: 8,
+              height: 'calc(100% - 24px)'
+            }}
           >
-            <div style={{
-              height: '100%',
-              display: 'flex',
-              flexDirection: 'column'
-            }}>
-              {renderMenu()}
-            </div>
+            <Menu
+              mode="inline"
+              theme="light"
+              selectedKeys={[selectedKey]}
+              items={menuItems}
+              inlineCollapsed={collapsed}
+              style={{ borderRight: 0, height: '100%', borderRadius: 8 }}
+              onClick={() => mobile && setDrawerVisible(false)}
+            />
           </Sider>
+        ) : (
+          <Drawer
+            title="菜单"
+            placement="left"
+            open={drawerVisible}
+            onClose={() => setDrawerVisible(false)}
+            style={{ zIndex: 9999 }}
+          >
+            <Menu
+              mode="inline"
+              theme="light"
+              selectedKeys={[selectedKey]}
+              items={menuItems}
+              style={{ borderRight: 0 }}
+              onClick={() => setDrawerVisible(false)}
+            />
+          </Drawer>
         )}
 
-        <Layout style={{
-          marginLeft: mobile ? 0 : (collapsed ? 60 : 220),
-          transition: 'all 0.2s'
-        }}>
+        <Layout
+          style={{
+            transition: 'all 0.2s',
+            backgroundColor: 'transparent'
+          }}
+        >
           <Content
             style={{
-              background: '#f5f7fa',
-              padding: mobile ? 12 : 24,
-              height: mobile ? 'calc(100vh - 56px)' : 'calc(100vh - 70px)',
+              background: 'transparent',
+              padding: mobile ? 12 : '0 24px 24px 24px',
+              height: '100%',
               overflow: 'hidden',
               display: 'flex',
               flexDirection: 'column'

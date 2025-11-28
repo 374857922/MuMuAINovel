@@ -9,10 +9,12 @@ import {
   ReloadOutlined,
   LeftOutlined,
   RightOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons';
 import api from '../services/api';
 import AnnotatedText, { type MemoryAnnotation } from '../components/AnnotatedText';
 import MemorySidebar from '../components/MemorySidebar';
+import { ChapterHistoryModal } from '../components/ChapterHistoryModal';
 
 interface ChapterData {
   id: string;
@@ -71,6 +73,7 @@ const ChapterReader: React.FC = () => {
   const [showAnnotations, setShowAnnotations] = useState(true);
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | undefined>();
   const [sidebarVisible, setSidebarVisible] = useState(false);
+  const [historyModalVisible, setHistoryModalVisible] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [navigation, setNavigation] = useState<NavigationData | null>(null);
@@ -286,6 +289,12 @@ const ChapterReader: React.FC = () => {
 
           <Space>
             <Button
+              icon={<HistoryOutlined />}
+              onClick={() => setHistoryModalVisible(true)}
+            >
+              历史版本
+            </Button>
+            <Button
               icon={<ReloadOutlined />}
               onClick={handleReanalyze}
               loading={analyzing}
@@ -449,6 +458,17 @@ const ChapterReader: React.FC = () => {
           />
         </Drawer>
       )}
+
+      {/* 历史版本弹窗 */}
+      <ChapterHistoryModal
+        chapterId={chapterId!}
+        visible={historyModalVisible}
+        onClose={() => setHistoryModalVisible(false)}
+        onRestoreSuccess={() => {
+          loadChapterData();
+          message.success('已加载历史版本内容');
+        }}
+      />
     </div>
   );
 };

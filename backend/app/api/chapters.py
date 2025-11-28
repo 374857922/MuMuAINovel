@@ -40,6 +40,7 @@ from app.services.prompt_service import prompt_service
 from app.services.plot_analyzer import PlotAnalyzer
 from app.services.memory_service import memory_service
 from app.services.chapter_regenerator import ChapterRegenerator
+from app.services.version_control_service import get_version_control_service
 from app.logger import get_logger
 from app.api.settings import get_user_ai_service
 from app.utils.sse_response import create_sse_response
@@ -283,27 +284,40 @@ async def update_chapter(
         select(Chapter).where(Chapter.id == chapter_id)
     )
     chapter = result.scalar_one_or_none()
-    
+
     if not chapter:
         raise HTTPException(status_code=404, detail="章节不存在")
-    
+
     # 验证用户权限
     user_id = getattr(request.state, 'user_id', None)
     await verify_project_access(chapter.project_id, user_id, db)
-    
+
     # 记录旧字数
     old_word_count = chapter.word_count or 0
-    
-    # 更新字段
+
+    # 判断内容是否更新
     update_data = chapter_update.model_dump(exclude_unset=True)
+    content_updated = "content" in update_data and update_data["content"] != chapter.content
+
+    # 如果内容更新，先创建版本（保存当前状态）
+    if content_updated:
+        version_service = get_version_control_service()
+        await version_service.create_version(
+            db=db,
+            chapter_id=chapter_id,
+            user_id=user_id,
+            source="user"
+        )
+
+    # 更新字段
     for field, value in update_data.items():
         setattr(chapter, field, value)
-    
+
     # 如果内容更新了，重新计算字数
-    if "content" in update_data and chapter.content:
+    if content_updated and chapter.content:
         new_word_count = len(chapter.content)
         chapter.word_count = new_word_count
-        
+
         # 更新项目字数
         result = await db.execute(
             select(Project).where(Project.id == chapter.project_id)
@@ -311,7 +325,7 @@ async def update_chapter(
         project = result.scalar_one_or_none()
         if project:
             project.current_words = project.current_words - old_word_count + new_word_count
-    
+
     await db.commit()
     await db.refresh(chapter)
     return chapter
@@ -1262,7 +1276,19 @@ async def generate_chapter_content_stream(
                     model="default"
                 )
                 db_session.add(history)
-                
+
+                # 创建版本记录（AI生成的内容）
+                version_service = get_version_control_service()
+                await version_service.create_version(
+                    db=db_session,
+                    chapter_id=chapter_id,
+                    user_id=current_user_id,
+                    source="ai",
+                    ai_provider=user_ai_service.provider,
+                    ai_model=user_ai_service.model,
+                    generation_prompt=prompt[:1000] if len(prompt) > 1000 else prompt
+                )
+
                 await db_session.commit()
                 db_committed = True
                 await db_session.refresh(current_chapter)
@@ -2641,5 +2667,136 @@ async def get_regeneration_tasks(
             }
             for task in tasks
         ]
+    }
+
+
+
+# ========== 版本控制API ==========
+
+@router.get("/{chapter_id}/versions", summary="获取章节版本列表")
+async def get_chapter_versions(
+    chapter_id: str,
+    request: Request,
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取章节的版本历史列表"""
+    # 验证权限
+    user_id = getattr(request.state, 'user_id', None)
+    chapter_result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
+    chapter = chapter_result.scalar_one_or_none()
+
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    await verify_project_access(chapter.project_id, user_id, db)
+
+    # 获取版本列表
+    version_service = get_version_control_service()
+    versions = await version_service.list_versions(db, chapter_id, limit)
+
+    return {
+        "chapter_id": chapter_id,
+        "total": len(versions),
+        "versions": versions
+    }
+
+
+@router.post("/{chapter_id}/versions", summary="手动创建新版本")
+async def create_version(
+    chapter_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """手动创建新版本（用于保存重要节点）"""
+    # 验证权限
+    user_id = getattr(request.state, 'user_id', None)
+    chapter_result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
+    chapter = chapter_result.scalar_one_or_none()
+
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    await verify_project_access(chapter.project_id, user_id, db)
+
+    # 创建版本
+    version_service = get_version_control_service()
+    version_id = await version_service.create_version(
+        db=db,
+        chapter_id=chapter_id,
+        user_id=user_id,
+        source="user"
+    )
+
+    return {
+        "message": "版本创建成功",
+        "version_id": version_id
+    }
+
+
+@router.post("/{chapter_id}/versions/{version_id}/restore", summary="恢复到指定版本")
+async def restore_version(
+    chapter_id: str,
+    version_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """恢复到指定版本"""
+    # 验证权限
+    user_id = getattr(request.state, 'user_id', None)
+    chapter_result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
+    chapter = chapter_result.scalar_one_or_none()
+
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    await verify_project_access(chapter.project_id, user_id, db)
+
+    # 恢复版本
+    version_service = get_version_control_service()
+    await version_service.restore_version(db, chapter_id, version_id, user_id)
+
+    return {
+        "message": "版本恢复成功"
+    }
+
+
+@router.get("/{chapter_id}/versions/{version_id}", summary="获取版本详情")
+async def get_version_detail(
+    chapter_id: str,
+    version_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """获取单个版本的完整内容"""
+    # 验证权限
+    user_id = getattr(request.state, 'user_id', None)
+    chapter_result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
+    chapter = chapter_result.scalar_one_or_none()
+
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    await verify_project_access(chapter.project_id, user_id, db)
+
+    # 获取版本详情
+    version_service = get_version_control_service()
+    version = await version_service.get_version(db, version_id)
+
+    if not version:
+        raise HTTPException(status_code=404, detail="版本不存在")
+
+    if version.chapter_id != chapter_id:
+        raise HTTPException(status_code=400, detail="版本不属于该章节")
+
+    return {
+        "id": version.id,
+        "version_number": version.version_number,
+        "content": version.content,
+        "word_count": version.word_count,
+        "source": version.source,
+        "ai_provider": version.ai_provider,
+        "ai_model": version.ai_model,
+        "created_at": version.created_at.isoformat()
     }
 

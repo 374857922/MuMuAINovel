@@ -653,6 +653,11 @@ export interface MCPPluginCreate {
   enabled?: boolean;
 }
 
+export interface MCPPluginSimpleCreate {
+  config_json: string;
+  enabled: boolean;
+}
+
 export interface MCPPluginUpdate {
   display_name?: string;
   description?: string;

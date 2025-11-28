@@ -1,9 +1,4 @@
 import axios from 'axios';
-
-interface MCPPluginSimpleCreate {
-  config_json: string;
-  enabled: boolean;
-}
 import { message } from 'antd';
 import { ssePost } from '../utils/sseClient';
 import type { SSEClientOptions } from '../utils/sseClient';
@@ -41,6 +36,7 @@ import type {
   WritingStyleListResponse,
   MCPPlugin,
   MCPPluginCreate,
+  MCPPluginSimpleCreate,
   MCPPluginUpdate,
   MCPTestResult,
   MCPTool,
@@ -762,4 +758,23 @@ export const chapterGraphApi = {
   // 查找关系路径
   findPath: (projectId: string, fromChapterId: string, toChapterId: string, maxHops?: number) =>
     api.get(`/chapter-graph/path/${projectId}/${fromChapterId}/${toChapterId}`, { params: { max_hops: maxHops } }),
+};
+
+// 版本控制 API
+export const versionApi = {
+  // 获取章节版本列表
+  getVersions: (chapterId: string, limit?: number) =>
+    api.get(`/chapters/${chapterId}/versions`, { params: { limit } }),
+
+  // 手动创建新版本
+  createVersion: (chapterId: string) =>
+    api.post(`/chapters/${chapterId}/versions`),
+
+  // 恢复到指定版本
+  restoreVersion: (chapterId: string, versionId: string) =>
+    api.post(`/chapters/${chapterId}/versions/${versionId}/restore`),
+
+  // 获取版本详情
+  getVersionDetail: (chapterId: string, versionId: string) =>
+    api.get(`/chapters/${chapterId}/versions/${versionId}`),
 };
