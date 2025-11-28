@@ -56,7 +56,7 @@ export const GraphVisualization: React.FC<GraphVisualizationProps> = ({
 }) => {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
-  const [viewMode, setViewMode] = useState<'force' | 'timeline'>('force');
+  const [viewMode, setViewMode] = useState<'force' | 'timeline' | 'arc'>('arc');
   const [showLabels, setShowLabels] = useState(true);
   const [linkWidth, setLinkWidth] = useState(2);
   const [highlightedPath, setHighlightedPath] = useState<string[]>([]);
@@ -92,29 +92,43 @@ export const GraphVisualization: React.FC<GraphVisualizationProps> = ({
     // 构建节点数据
     const nodes = filteredNodes.map((node, index) => {
       const isHighlighted = highlightedPath.includes(node.id);
-      
-      // 时间线布局位置
-      const timelineX = viewMode === 'timeline' 
-        ? 100 + (node.chapterNumber - 1) * 120 
-        : undefined;
-      const timelineY = viewMode === 'timeline' 
-        ? 300 + (index % 3 - 1) * 80 
-        : undefined;
+
+      // 弧线图布局：按章节号水平排列在一条直线
+      let nodeX, nodeY, nodeFixed;
+      if (viewMode === 'arc') {
+        // 弧线图：章节按编号从左到右排列，固定在一条水平线上
+        nodeX = 100 + (node.chapterNumber - 1) * 100;  // 100px间隔
+        nodeY = 300;  // 固定Y坐标，所有节点在同一水平线
+        nodeFixed = true;  // 固定位置，不参与力导向计算
+      } else if (viewMode === 'timeline') {
+        // 时间线布局（原有逻辑）
+        nodeX = 100 + (node.chapterNumber - 1) * 120;
+        nodeY = 300 + (index % 3 - 1) * 80;
+        nodeFixed = true;
+      } else {
+        // 力导向布局：不固定位置
+        nodeX = undefined;
+        nodeY = undefined;
+        nodeFixed = false;
+      }
 
       return {
         id: node.id,
         name: `第${node.chapterNumber}章`,
         ...node,
-        x: timelineX,
-        y: timelineY,
-        fixed: viewMode === 'timeline',
+        x: nodeX,
+        y: nodeY,
+        fixed: nodeFixed,
         symbolSize: Math.max(25, node.size + (isHighlighted ? 10 : 0)),
         label: {
           show: showLabels,
-          formatter: viewMode === 'timeline' ? `{b}\n${node.title.slice(0, 6)}` : '{b}',
-          fontSize: 11,
+          formatter: (viewMode === 'timeline' || viewMode === 'arc')
+            ? `{b}\n${node.title.slice(0, 6)}`
+            : '{b}',
+          fontSize: viewMode === 'arc' ? 10 : 11,
           color: '#333',
-          distance: 5
+          distance: 5,
+          rotate: viewMode === 'arc' ? 45 : 0  // 弧线图标签旋转避免重叠
         },
         itemStyle: {
           color: getNodeColor(node.importance),
@@ -129,16 +143,26 @@ export const GraphVisualization: React.FC<GraphVisualizationProps> = ({
     // 构建边数据
     const edges = filteredLinks.map(link => {
       const config = LINK_CONFIG[link.type] || LINK_CONFIG.continuation;
-      const isHighlighted = highlightedPath.includes(link.source) && 
+      const isHighlighted = highlightedPath.includes(link.source) &&
                            highlightedPath.includes(link.target);
-      
+
+      // 计算源和目标章节的编号差，用于弧线高度
+      const sourceNode = filteredNodes.find(n => n.id === link.source);
+      const targetNode = filteredNodes.find(n => n.id === link.target);
+      const chapterDistance = sourceNode && targetNode
+        ? Math.abs(targetNode.chapterNumber - sourceNode.chapterNumber)
+        : 1;
+
       return {
         ...link,
         lineStyle: {
           color: config.color,
           width: (link.strength * linkWidth * 2) + (isHighlighted ? 2 : 0),
           type: config.dash ? 'dashed' : 'solid',
-          curveness: viewMode === 'timeline' ? 0.3 : 0.2,
+          // 弧线图：弧线高度与章节距离成正比，距离越远弧线越高
+          curveness: viewMode === 'arc'
+            ? 0.2 + Math.min(chapterDistance * 0.08, 0.6)  // 最大0.8弧度
+            : viewMode === 'timeline' ? 0.3 : 0.2,
           opacity: isHighlighted ? 1 : 0.7
         },
         emphasis: {
@@ -154,7 +178,7 @@ export const GraphVisualization: React.FC<GraphVisualizationProps> = ({
     const option: echarts.EChartsOption = {
       backgroundColor: '#fafafa',
       title: {
-        text: viewMode === 'timeline' ? '章节时间线' : '章节关系网络',
+        text: viewMode === 'timeline' ? '章节时间线' : viewMode === 'arc' ? '章节弧线图' : '章节关系网络',
         subtext: `${filteredNodes.length} 个章节，${filteredLinks.length} 个关系`,
         left: 'center',
         top: 10,
@@ -221,7 +245,7 @@ export const GraphVisualization: React.FC<GraphVisualizationProps> = ({
       },
       series: [{
         type: 'graph',
-        layout: viewMode === 'timeline' ? 'none' : 'force',
+        layout: viewMode === 'timeline' || viewMode === 'arc' ? 'none' : 'force',
         data: nodes,
         links: edges,
         categories: Object.entries(LINK_CONFIG).map(([key, value]) => ({
@@ -230,7 +254,7 @@ export const GraphVisualization: React.FC<GraphVisualizationProps> = ({
         roam: true,
         zoom: 1,
         focusNodeAdjacency: true,
-        draggable: viewMode !== 'timeline',
+        draggable: viewMode !== 'timeline' && viewMode !== 'arc',
         force: viewMode === 'force' ? {
           repulsion: 800,
           gravity: 0.08,
@@ -257,14 +281,14 @@ export const GraphVisualization: React.FC<GraphVisualizationProps> = ({
           }
         }
       }],
-      // 时间线模式下添加x轴
-      ...(viewMode === 'timeline' ? {
+      // 时间线和弧线图模式下添加坐标轴（用于固定位置）
+      ...((viewMode === 'timeline' || viewMode === 'arc') ? {
         xAxis: {
           type: 'value',
           show: false
         },
         yAxis: {
-          type: 'value', 
+          type: 'value',
           show: false
         }
       } : {})
@@ -355,15 +379,16 @@ export const GraphVisualization: React.FC<GraphVisualizationProps> = ({
         <Space size="middle">
           <span>
             <Text type="secondary">视图模式：</Text>
-            <Radio.Group 
-              value={viewMode} 
+            <Radio.Group
+              value={viewMode}
               onChange={e => setViewMode(e.target.value)}
               size="small"
               optionType="button"
               buttonStyle="solid"
             >
-              <Radio.Button value="force">力导向</Radio.Button>
+              <Radio.Button value="arc">弧线图</Radio.Button>
               <Radio.Button value="timeline">时间线</Radio.Button>
+              <Radio.Button value="force">力导向</Radio.Button>
             </Radio.Group>
           </span>
           
@@ -428,7 +453,7 @@ export const GraphVisualization: React.FC<GraphVisualizationProps> = ({
         <span><span style={{ color: '#1890ff' }}>●</span> 普通章节</span>
         <span><span style={{ color: '#8c8c8c' }}>●</span> 次要章节</span>
         <Text type="secondary" style={{ marginLeft: 'auto' }}>
-          提示：双击节点高亮相关路径
+          {viewMode === 'arc' ? '提示：弧线高度 = 章节距离' : '提示：双击节点高亮相关路径'}
         </Text>
       </div>
 
