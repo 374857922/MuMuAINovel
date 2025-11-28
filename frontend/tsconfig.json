@@ -1,4 +1,9 @@
 {
+	"compilerOptions": {
+    "noEmitOnError": false,
+    "skipLibCheck": true
+  },
+  "ts-node": { "transpileOnly": true },
   "files": [],
   "references": [
     { "path": "./tsconfig.app.json" },

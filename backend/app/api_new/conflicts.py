@@ -9,8 +9,9 @@ from app.database import get_db
 from app.models_new import EntitySnapshot, Conflict
 from app.models.chapter import Chapter
 from app.models.project import Project
+from app.models.settings import Settings
 from app.services_new import EntityExtractor, ConflictDetector
-from app.services.ai_service import AIService
+from app.services.ai_service import AIService, create_user_ai_service
 from app.schemas.conflict import (
     ConflictResponse,
     ConflictDetailResponse,
@@ -18,42 +19,80 @@ from app.schemas.conflict import (
     ConflictResolveRequest
 )
 from app.logger import get_logger
+from app.config import settings as app_settings
 
 router = APIRouter(prefix="/conflicts", tags=["矛盾检测"])
 logger = get_logger(__name__)
 
-# AI服务实例
-_ai_service: Optional[AIService] = None
+
+def _read_env_defaults() -> Dict[str, Any]:
+    """从环境变量读取默认AI配置"""
+    return {
+        "api_provider": app_settings.default_ai_provider,
+        "api_key": app_settings.openai_api_key or app_settings.anthropic_api_key or "",
+        "api_base_url": app_settings.openai_base_url or app_settings.anthropic_base_url or "",
+        "llm_model": app_settings.default_model,
+        "temperature": app_settings.default_temperature,
+        "max_tokens": app_settings.default_max_tokens,
+    }
 
 
-def get_ai_service() -> AIService:
-    """获取AI服务单例"""
-    global _ai_service
-    if _ai_service is None:
-        _ai_service = AIService()
-    return _ai_service
+async def get_user_ai_service(user_id: str, db: AsyncSession) -> AIService:
+    """
+    获取当前用户的AI服务实例
+    从数据库读取用户设置并创建对应的AI服务
+
+    Args:
+        user_id: 用户ID
+        db: 数据库会话
+
+    Returns:
+        AIService: 使用用户配置创建的AI服务实例
+    """
+    result = await db.execute(
+        select(Settings).where(Settings.user_id == user_id)
+    )
+    settings = result.scalar_one_or_none()
+
+    if not settings:
+        # 如果用户没有设置，从环境变量读取并保存
+        env_defaults = _read_env_defaults()
+        settings = Settings(
+            user_id=user_id,
+            **env_defaults
+        )
+        db.add(settings)
+        await db.commit()
+        await db.refresh(settings)
+        logger.info(f"用户 {user_id} 首次使用AI服务，已从环境变量同步设置到数据库")
+
+    # 使用用户设置创建AI服务实例
+    return create_user_ai_service(
+        api_provider=settings.api_provider,
+        api_key=settings.api_key,
+        api_base_url=settings.api_base_url or "",
+        model_name=settings.llm_model,
+        temperature=settings.temperature,
+        max_tokens=settings.max_tokens
+    )
 
 
-def get_extractor(use_ai: bool = False) -> EntityExtractor:
+def get_extractor(ai_service: Optional[AIService] = None) -> EntityExtractor:
     """获取实体提取器
-    
+
     Args:
-        use_ai: 是否使用AI（默认False，使用规则匹配更快）
+        ai_service: AI服务实例（传入则使用AI提取，否则使用规则匹配）
     """
-    if use_ai:
-        return EntityExtractor(ai_service=get_ai_service())
-    return EntityExtractor(ai_service=None)
+    return EntityExtractor(ai_service=ai_service)
 
 
-def get_detector(use_ai: bool = False) -> ConflictDetector:
+def get_detector(ai_service: Optional[AIService] = None) -> ConflictDetector:
     """获取矛盾检测器
-    
+
     Args:
-        use_ai: 是否使用AI辅助判断矛盾
+        ai_service: AI服务实例（传入则使用AI辅助判断）
     """
-    if use_ai:
-        return ConflictDetector(ai_service=get_ai_service())
-    return ConflictDetector(ai_service=None)
+    return ConflictDetector(ai_service=ai_service)
 
 
 @router.post("/extract/{project_id}", summary="提取项目中的所有实体设定")
@@ -62,8 +101,7 @@ async def extract_entities(
     request: Request,
     db: AsyncSession = Depends(get_db),
     mode: str = Query("incremental", description="提取模式: incremental(增量)/full(全量)"),
-    ai_provider: Optional[str] = Query(None, description="AI提供商: openai/anthropic"),
-    ai_model: Optional[str] = Query(None, description="AI模型")
+    use_ai: bool = Query(False, description="是否使用AI提取（使用用户配置的AI设置）")
 ) -> Dict[str, Any]:
     """
     从项目的所有章节中提取实体设定快照
@@ -71,11 +109,13 @@ async def extract_entities(
     Args:
         project_id: 项目ID
         mode: 提取模式 - incremental(只处理新章节) / full(清空后全量提取)
-        ai_provider: AI提供商（可选，不传将使用规则匹配）
-        ai_model: AI模型（可选）
+        use_ai: 是否使用AI提取（将使用用户在设置中配置的AI服务）
     """
     # 验证用户权限
     user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="需要登录")
+
     project = await db.execute(
         select(Project).where(Project.id == project_id, Project.user_id == user_id)
     )
@@ -102,7 +142,7 @@ async def extract_entities(
     # 增量模式：只处理未提取过的章节
     chapters_to_process = all_chapters
     skipped_count = 0
-    
+
     if mode == "incremental":
         # 查询已提取过的章节ID
         extracted_result = await db.execute(
@@ -111,11 +151,11 @@ async def extract_entities(
             ).distinct()
         )
         extracted_chapter_ids = set(row[0] for row in extracted_result.all() if row[0])
-        
+
         # 过滤出未提取的章节
         chapters_to_process = [ch for ch in all_chapters if ch.id not in extracted_chapter_ids]
         skipped_count = len(all_chapters) - len(chapters_to_process)
-        
+
         if not chapters_to_process:
             return {
                 "message": "所有章节都已提取过，无需重复提取",
@@ -125,9 +165,22 @@ async def extract_entities(
                 "mode": mode
             }
 
+    # 获取用户的AI服务（如果需要使用AI）
+    ai_service = None
+    ai_provider = None
+    ai_model = None
+    if use_ai:
+        try:
+            ai_service = await get_user_ai_service(user_id, db)
+            ai_provider = ai_service.api_provider
+            ai_model = ai_service.default_model
+            logger.info(f"使用用户AI设置: provider={ai_provider}, model={ai_model}")
+        except Exception as e:
+            logger.error(f"获取用户AI设置失败: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"获取AI设置失败: {str(e)}")
+
     # 批量提取
-    use_ai = ai_provider is not None
-    extractor = get_extractor(use_ai=use_ai)
+    extractor = get_extractor(ai_service=ai_service)
     total_extracted, error_chapters = await extractor.batch_extract(
         chapters=chapters_to_process,
         db=db,
@@ -153,7 +206,7 @@ async def detect_conflicts(
     request: Request,
     db: AsyncSession = Depends(get_db),
     clear_existing: bool = Query(False, description="是否清空已有矛盾重新检测"),
-    use_ai: bool = Query(False, description="是否使用AI辅助判断矛盾"),
+    use_ai: bool = Query(False, description="是否使用AI辅助判断矛盾（使用用户配置的AI设置）"),
     auto_save: bool = Query(True, description="是否自动保存检测结果")
 ) -> Dict[str, Any]:
     """
@@ -162,11 +215,14 @@ async def detect_conflicts(
     Args:
         project_id: 项目ID
         clear_existing: 是否清空已有矛盾记录后重新检测
-        use_ai: 是否使用AI辅助判断（AI可以更准确判断是否真的矛盾）
+        use_ai: 是否使用AI辅助判断（将使用用户在设置中配置的AI服务）
         auto_save: 是否自动保存检测结果到数据库
     """
     # 验证权限
     user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="需要登录")
+
     project = await db.execute(
         select(Project).where(Project.id == project_id, Project.user_id == user_id)
     )
@@ -181,8 +237,18 @@ async def detect_conflicts(
         await db.commit()
         logger.info(f"已清空项目 {project_id} 的矛盾记录")
 
+    # 获取用户的AI服务（如果需要使用AI）
+    ai_service = None
+    if use_ai:
+        try:
+            ai_service = await get_user_ai_service(user_id, db)
+            logger.info(f"矛盾检测使用用户AI设置: provider={ai_service.api_provider}, model={ai_service.default_model}")
+        except Exception as e:
+            logger.error(f"获取用户AI设置失败: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"获取AI设置失败: {str(e)}")
+
     # 检测矛盾
-    detector = get_detector(use_ai=use_ai)
+    detector = get_detector(ai_service=ai_service)
     conflicts = await detector.detect_all(project_id, db)
 
     if not conflicts:
