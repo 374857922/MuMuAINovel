@@ -1,15 +1,18 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, Tooltip, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, FloatButton } from 'antd';
-import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, HistoryOutlined } from '@ant-design/icons';
+import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, HistoryOutlined, NodeIndexOutlined, RobotOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useChapterSync } from '../store/hooks';
-import { projectApi, writingStyleApi, chapterApi } from '../services/api';
+import { projectApi, writingStyleApi, chapterApi, termApi } from '../services/api';
 import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData } from '../types';
 import ChapterAnalysis from '../components/ChapterAnalysis';
 import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
 import { SSEProgressModal } from '../components/SSEProgressModal';
 import FloatingIndexPanel from '../components/FloatingIndexPanel';
 import { ChapterHistoryModal } from '../components/ChapterHistoryModal';
+import { SmartEditor } from '../components/SmartEditor'; // 导入组件
+import type { SmartEditorRef } from '../components/SmartEditor'; // 导入类型
+import { AIChatSidebar } from '../components/AIChatSidebar';
 
 const { TextArea } = Input;
 
@@ -23,7 +26,7 @@ export default function Chapters() {
   const [form] = Form.useForm();
   const [editorForm] = Form.useForm();
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
-  const contentTextAreaRef = useRef<any>(null);
+  const editorRef = useRef<SmartEditorRef>(null); // 使用新的 ref 类型
   const [writingStyles, setWritingStyles] = useState<WritingStyle[]>([]);
   const [selectedStyleId, setSelectedStyleId] = useState<number | undefined>();
   const [targetWordCount, setTargetWordCount] = useState<number>(3000);
@@ -38,6 +41,11 @@ export default function Chapters() {
   const [singleChapterProgress, setSingleChapterProgress] = useState(0);
   const [singleChapterProgressMessage, setSingleChapterProgressMessage] = useState('');
   const [historyModalVisible, setHistoryModalVisible] = useState(false);
+  const [isAutoLinking, setIsAutoLinking] = useState(false); // 自动关联状态
+  
+  // AI 助手相关状态
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [selectedText, setSelectedText] = useState('');
   
   // 批量生成相关状态
   const [batchGenerateVisible, setBatchGenerateVisible] = useState(false);
@@ -305,6 +313,28 @@ export default function Chapters() {
     }
   };
 
+  // 自动关联词条
+  const handleAutoLink = async () => {
+    if (!currentProject || !editorForm.getFieldValue('content')) return;
+    
+    setIsAutoLinking(true);
+    try {
+      const content = editorForm.getFieldValue('content');
+      const result = await termApi.autoIdentifyTerms(currentProject.id, content);
+      
+      if (result.count > 0) {
+        editorForm.setFieldsValue({ content: result.content });
+        message.success(`成功识别并关联了 ${result.count} 个词条！`);
+      } else {
+        message.info('未在内容中发现新的可关联词条');
+      }
+    } catch (error) {
+      message.error('自动关联词条失败');
+    } finally {
+      setIsAutoLinking(false);
+    }
+  };
+
   const handleGenerate = async () => {
     if (!editingId) return;
 
@@ -319,11 +349,9 @@ export default function Chapters() {
         (content) => {
           editorForm.setFieldsValue({ content });
           
-          if (contentTextAreaRef.current) {
-            const textArea = contentTextAreaRef.current.resizableTextArea?.textArea;
-            if (textArea) {
-              textArea.scrollTop = textArea.scrollHeight;
-            }
+          // 使用 SmartEditor 的滚动方法
+          if (editorRef.current) {
+            editorRef.current.scrollToBottom();
           }
         },
         selectedStyleId,
@@ -1334,6 +1362,7 @@ export default function Chapters() {
       <Modal
         title="编辑章节内容"
         open={isEditorOpen}
+        destroyOnClose={true} // 强制销毁，确保每次打开都重新加载内容
         onCancel={() => {
           if (isGenerating) {
             message.warning('AI正在创作中，请等待完成后再关闭');
@@ -1344,28 +1373,47 @@ export default function Chapters() {
         closable={!isGenerating}
         maskClosable={!isGenerating}
         keyboard={!isGenerating}
-        width={isMobile ? 'calc(100% - 32px)' : '85%'}
-        centered={!isMobile}
+        width={isMobile ? 'calc(100% - 32px)' : '100vw'} // 桌面端宽度 100vw
+        centered={false} // 不再居中，而是从顶部开始
         style={isMobile ? {
           top: 20,
           paddingBottom: 0,
           maxWidth: 'calc(100vw - 32px)',
           margin: '0 16px'
-        } : undefined}
+        } : { // 桌面端样式
+          top: 0,
+          paddingBottom: 0,
+          maxWidth: '100vw', // 最大宽度 100vw
+          height: '100vh', // 高度 100vh
+          margin: 0, // 移除边距
+        }}
         styles={{
+          content: {
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100vh', // 确保 Modal 内容区撑满
+            borderRadius: 0, // 全屏不需要圆角
+          },
           body: {
-            maxHeight: isMobile ? 'calc(100vh - 150px)' : 'calc(100vh - 110px)',
-            overflowY: 'auto',
-            padding: isMobile ? '16px 12px' : '8px'
+            flex: 1, // 让 body 撑满 Modal 内容区
+            overflowY: 'hidden', // Modal body 不再有自己的滚动条，交给内部内容处理
+            padding: isMobile ? '16px 12px' : '0', // 桌面端内边距为 0
           }
         }}
         footer={null}
       >
-        <Form form={editorForm} layout="vertical" onFinish={handleEditorSubmit}>
-          <Form.Item
-            label="章节标题"
-            tooltip="章节标题由大纲统一管理，建议在大纲页面修改以保持一致性"
-          >
+        <div style={{ display: 'flex', gap: 16, height: isMobile ? 'calc(100vh - 120px)' : '100%', overflow: 'hidden' }}>
+          {/* 左侧编辑器区域 */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%' }}>
+            <Form form={editorForm} layout="vertical" onFinish={handleEditorSubmit} style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+              
+              {/* 顶部表单项容器 */}
+              <div style={{ flexShrink: 0, paddingRight: 4 }}>
+                <Form.Item
+                  label="章节标题"
+                  tooltip="章节标题由大纲统一管理，建议在大纲页面修改以保持一致性"
+                  style={{ marginBottom: 12 }}
+                >
             <Space.Compact style={{ width: '100%' }}>
               <Form.Item
                 name="title"
@@ -1400,7 +1448,7 @@ export default function Chapters() {
 
           <Form.Item
             label="写作风格"
-            tooltip="选择AI创作时使用的写作风格，可在写作风格菜单中管理"
+            style={{ marginBottom: 12 }}
             required
           >
             <Select
@@ -1420,16 +1468,11 @@ export default function Chapters() {
                 </Select.Option>
               ))}
             </Select>
-            {!selectedStyleId && (
-              <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>
-                请选择写作风格
-              </div>
-            )}
           </Form.Item>
 
           <Form.Item
             label="目标字数"
-            tooltip="AI生成章节时的目标字数，实际生成字数可能略有偏差"
+            style={{ marginBottom: 12 }}
           >
             <InputNumber
               min={500}
@@ -1438,35 +1481,62 @@ export default function Chapters() {
               value={targetWordCount}
               onChange={(value) => setTargetWordCount(value || 3000)}
               size="large"
-              disabled={isGenerating}
               style={{ width: '100%' }}
               formatter={(value) => `${value} 字`}
               parser={(value) => value?.replace(' 字', '') as any}
             />
-            <div style={{ color: '#666', fontSize: 12, marginTop: 4 }}>
-              建议范围：500-10000字，默认3000字
+          </Form.Item>
+          </div>
+
+          {/* 编辑器区域 - 使用 flex: 1 撑开剩余空间 */}
+          <div style={{ flex: 1, minHeight: 0, marginBottom: 12, display: 'flex', flexDirection: 'column' }}>
+            <div className="ant-form-item-label" style={{ marginBottom: 8 }}>
+              <label>章节内容</label>
             </div>
-          </Form.Item>
-
-          <Form.Item label="章节内容" name="content">
-            <TextArea
-              ref={contentTextAreaRef}
-              rows={isMobile ? 12 : 20}
-              placeholder="开始写作..."
-              style={{ fontFamily: 'monospace', fontSize: isMobile ? 12 : 14 }}
-              disabled={isGenerating}
-            />
-          </Form.Item>
-
-          <Form.Item>
-            <Space style={{ width: '100%', justifyContent: 'space-between', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'center' }}>
-              <Button
-                icon={<HistoryOutlined />}
-                onClick={() => setHistoryModalVisible(true)}
+            <Form.Item name="content" noStyle>
+              <SmartEditor
+                ref={editorRef}
+                height="100%"
+                placeholder="开始写作..."
                 disabled={isGenerating}
-              >
-                历史版本
-              </Button>
+                onSelectionChange={setSelectedText}
+                style={{ flex: 1, height: '100%' }} // 移除 overflow: 'hidden'
+              />
+            </Form.Item>
+          </div>
+
+          {/* 底部按钮区域 - 固定在底部 */}
+          <div style={{ flexShrink: 0, paddingTop: 12, borderTop: '1px solid #f0f0f0' }}>
+            <Form.Item style={{ marginBottom: 0 }}>
+            <Space style={{ width: '100%', justifyContent: 'space-between', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'center' }}>
+              <Space>
+                <Button
+                  icon={<HistoryOutlined />}
+                  onClick={() => setHistoryModalVisible(true)}
+                  disabled={isGenerating}
+                >
+                  历史版本
+                </Button>
+                <Tooltip title="自动扫描内容中的词条并添加 [[ ]] 链接，以便在阅读时高亮显示">
+                  <Button
+                    icon={<NodeIndexOutlined />}
+                    onClick={handleAutoLink}
+                    loading={isAutoLinking}
+                    disabled={isGenerating}
+                  >
+                    自动关联词条
+                  </Button>
+                </Tooltip>
+                <Tooltip title={isChatOpen ? "关闭 AI 助手" : "打开 AI 助手 (Copilot)"}>
+                  <Button
+                    icon={<RobotOutlined />}
+                    type={isChatOpen ? 'primary' : 'default'}
+                    onClick={() => setIsChatOpen(!isChatOpen)}
+                  >
+                    AI 助手
+                  </Button>
+                </Tooltip>
+              </Space>
               <Space style={{ width: isMobile ? '100%' : 'auto', justifyContent: 'flex-end' }}>
                 <Button
                   onClick={() => {
@@ -1491,8 +1561,37 @@ export default function Chapters() {
                 </Button>
               </Space>
             </Space>
-          </Form.Item>
+            </Form.Item>
+          </div>
         </Form>
+        </div>
+
+        {/* 右侧 AI 助手区域 */}
+        {isChatOpen && (
+          <div style={{
+            width: isMobile ? '100%' : 350,
+            borderLeft: isMobile ? 'none' : '1px solid #f0f0f0',
+            borderTop: isMobile ? '1px solid #f0f0f0' : 'none',
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100%',
+            backgroundColor: '#fff',
+            // 确保不被挤压
+            flexShrink: 0
+          }}>
+            <AIChatSidebar
+              projectId={currentProject?.id || ''}
+              chapterId={editingId || undefined}
+              selectedText={selectedText}
+              contextText={editorForm.getFieldValue('content')}
+              visible={isChatOpen}
+              onClose={() => setIsChatOpen(false)}
+              onInsertText={(text) => editorRef.current?.insertText(text)}
+              onReplaceText={(text) => editorRef.current?.replaceSelection(text)}
+            />
+          </div>
+        )}
+      </div>
       </Modal>
       
       {editingId && (

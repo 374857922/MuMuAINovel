@@ -144,7 +144,7 @@ from app.api import (
     projects, outlines, characters, chapters,
     wizard_stream, relationships, organizations,
     auth, users, settings, writing_styles, memories,
-    mcp_plugins, admin, inspiration
+    mcp_plugins, admin, inspiration, terms, ai_chat # <-- 添加 ai_chat
 )
 from app.api_new import router as new_features_router
 
@@ -164,6 +164,8 @@ app.include_router(organizations.router, prefix="/api")
 app.include_router(writing_styles.router, prefix="/api")
 app.include_router(memories.router)  # 记忆管理API (已包含/api前缀)
 app.include_router(mcp_plugins.router, prefix="/api")  # MCP插件管理API
+app.include_router(terms.router, prefix="/api") # 百科词条 API
+app.include_router(ai_chat.router, prefix="/api") # <-- 添加 AI 助手 API
 app.include_router(new_features_router, prefix="/api")  # 新功能：矛盾检测、章节图谱
 
 static_dir = Path(__file__).parent.parent / "static"

@@ -11,10 +11,11 @@ import {
   RightOutlined,
   HistoryOutlined,
 } from '@ant-design/icons';
-import api from '../services/api';
+import api, { termApi } from '../services/api'; // 导入 termApi
 import AnnotatedText, { type MemoryAnnotation } from '../components/AnnotatedText';
 import MemorySidebar from '../components/MemorySidebar';
 import { ChapterHistoryModal } from '../components/ChapterHistoryModal';
+import type { Term } from '../types/index'; // 导入 Term 类型
 
 interface ChapterData {
   id: string;
@@ -77,6 +78,7 @@ const ChapterReader: React.FC = () => {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [navigation, setNavigation] = useState<NavigationData | null>(null);
+  const [projectTerms, setProjectTerms] = useState<Term[]>([]); // 新增项目词条状态
 
   useEffect(() => {
     if (chapterId) {
@@ -89,36 +91,42 @@ const ChapterReader: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      // 并行加载章节内容、标注数据和导航信息
-      // 注意：api拦截器已经解析了response.data，所以直接返回数据对象
-      const [chapterData, annotationsData, navigationData] = await Promise.all([
-        api.get<unknown, ChapterData>(`/chapters/${chapterId}`).catch(err => {
-          console.error('加载章节失败:', err);
-          throw err;
-        }),
-        api.get<unknown, AnnotationsData>(`/chapters/${chapterId}/annotations`).catch(err => {
-          console.warn('加载标注失败:', err);
-          return null;
-        }), // 如果没有分析数据也不报错
-        api.get<unknown, NavigationData>(`/chapters/${chapterId}/navigation`).catch(err => {
-          console.warn('加载导航信息失败:', err);
-          return null;
-        }),
-      ]);
-
-      console.log('章节数据:', chapterData);
-      console.log('标注数据:', annotationsData);
-      console.log('导航数据:', navigationData);
+      // 1. 首先加载章节内容以获取 project_id
+      const chapterData = await api.get<unknown, ChapterData>(`/chapters/${chapterId}`).catch(err => {
+        console.error('加载章节失败:', err);
+        throw err;
+      });
 
       // 验证数据
       if (!chapterData || !chapterData.content) {
         throw new Error('章节数据无效：缺少内容');
       }
 
+      // 2. 并行加载其他数据
+      const [annotationsData, navigationData, termsResponse] = await Promise.all([
+        api.get<unknown, AnnotationsData>(`/chapters/${chapterId}/annotations`).catch(err => {
+          console.warn('加载标注失败:', err);
+          return null;
+        }),
+        api.get<unknown, NavigationData>(`/chapters/${chapterId}/navigation`).catch(err => {
+          console.warn('加载导航信息失败:', err);
+          return null;
+        }),
+        termApi.getProjectTerms(chapterData.project_id).catch(err => {
+          console.warn('加载项目词条失败:', err);
+          return { items: [] };
+        }),
+      ]);
+
+      console.log('章节数据:', chapterData);
+      console.log('标注数据:', annotationsData);
+      console.log('导航数据:', navigationData);
+      console.log('项目词条:', termsResponse?.items);
+
       setChapter(chapterData);
       setNavigation(navigationData);
+      setProjectTerms(termsResponse?.items || []);
       
-      // 验证标注数据
       if (annotationsData) {
         const validAnnotations = annotationsData.annotations.filter(
           (a: MemoryAnnotation) => a.position >= 0 && a.position < chapterData.content.length
@@ -373,6 +381,7 @@ const ChapterReader: React.FC = () => {
                 <AnnotatedText
                   content={chapter.content}
                   annotations={annotationsData.annotations}
+                  projectTerms={projectTerms} // 传递项目词条
                   onAnnotationClick={handleAnnotationClick}
                   activeAnnotationId={activeAnnotationId}
                 />

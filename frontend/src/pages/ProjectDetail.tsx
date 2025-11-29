@@ -147,6 +147,11 @@ export default function ProjectDetail() {
       label: <Link to={`/project/${projectId}/writing-styles`}>写作风格</Link>,
     },
     {
+      key: 'wiki',
+      icon: <BookOutlined />,
+      label: <Link to={`/project/${projectId}/wiki`}>项目百科</Link>,
+    },
+    {
       type: 'divider' as const,
       style: { margin: '8px 0' },
     },
@@ -165,6 +170,7 @@ export default function ProjectDetail() {
     if (path.includes('/conflict-detection')) return 'conflict-detection';
     if (path.includes('/chapter-graph')) return 'chapter-graph';
     if (path.includes('/writing-styles')) return 'writing-styles';
+    if (path.includes('/wiki')) return 'wiki'; // 新增百科词条选中逻辑
     return 'outline';
   }, [location.pathname]);
 

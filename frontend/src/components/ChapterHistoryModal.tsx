@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Modal, List, Button, Tag, Space, Typography, message, Popconfirm, Drawer, Spin } from 'antd';
 import { HistoryOutlined, RollbackOutlined, EyeOutlined, ClockCircleOutlined, UserOutlined, RobotOutlined } from '@ant-design/icons';
 import { versionApi } from '../services/api';
+import { SmartEditor } from './SmartEditor';
 
 const { Text, Paragraph } = Typography;
 
@@ -223,8 +224,12 @@ export const ChapterHistoryModal: React.FC<ChapterHistoryModalProps> = ({
                 <Text>时间: {new Date(previewVersion.created_at).toLocaleString()}</Text>
               </Space>
             </div>
-            <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8, fontSize: 16 }}>
-              {previewVersion.content}
+            <div style={{ height: 'calc(100vh - 200px)', border: '1px solid #d9d9d9', borderRadius: '6px' }}>
+              <SmartEditor
+                value={previewVersion.content}
+                disabled={true}
+                height="100%"
+              />
             </div>
           </div>
         ) : (

@@ -42,6 +42,7 @@ import type {
   MCPTool,
   MCPToolCallRequest,
   MCPToolCallResponse,
+  Term, TermCreate, TermUpdate, TermListResponse, // 新增 Term 相关类型
 } from '../types';
 
 const api = axios.create({
@@ -777,4 +778,41 @@ export const versionApi = {
   // 获取版本详情
   getVersionDetail: (chapterId: string, versionId: string) =>
     api.get(`/chapters/${chapterId}/versions/${versionId}`),
+};
+
+// 百科词条 API
+export const termApi = {
+  // 创建词条
+  createTerm: (data: TermCreate) => api.post<unknown, Term>('/terms', data),
+  
+  // 获取项目所有词条
+  getProjectTerms: (projectId: string, params?: { skip?: number; limit?: number }) =>
+    api.get<unknown, TermListResponse>(`/terms/project/${projectId}`, { params }),
+    
+  // 获取单个词条
+  getTerm: (termId: string) => api.get<unknown, Term>(`/terms/${termId}`),
+  
+  // 更新词条
+  updateTerm: (termId: string, data: TermUpdate) =>
+    api.put<unknown, Term>(`/terms/${termId}`, data),
+  
+  // 删除词条
+  deleteTerm: (termId: string) =>
+    api.delete<unknown, { message: string }>(`/terms/${termId}`),
+
+  // 自动识别词条
+  autoIdentifyTerms: (projectId: string, content: string) =>
+    api.post<unknown, { content: string; identified_terms: string[]; count: number }>(`/terms/project/${projectId}/auto-identify`, { content }),
+};
+
+// AI 助手 API
+export const aiChatApi = {
+  chatStream: (data: {
+    project_id: string;
+    chapter_id?: string;
+    prompt: string;
+    selected_text?: string;
+    context_text?: string;
+    use_mcp?: boolean;
+  }, options?: SSEClientOptions) => ssePost('/api/ai/chat', data, options)
 };

@@ -118,7 +118,40 @@ async def create_chapter(
     
     await db.commit()
     await db.refresh(db_chapter)
-    return db_chapter
+    
+    # 填充大纲信息
+    chapter_dict = {
+        "id": db_chapter.id,
+        "project_id": db_chapter.project_id,
+        "chapter_number": db_chapter.chapter_number,
+        "title": db_chapter.title,
+        "content": db_chapter.content,
+        "summary": db_chapter.summary,
+        "word_count": db_chapter.word_count,
+        "status": db_chapter.status,
+        "outline_id": db_chapter.outline_id,
+        "sub_index": db_chapter.sub_index,
+        "expansion_plan": db_chapter.expansion_plan,
+        "created_at": db_chapter.created_at,
+        "updated_at": db_chapter.updated_at,
+    }
+    
+    if db_chapter.outline_id:
+        outline_result = await db.execute(
+            select(Outline).where(Outline.id == db_chapter.outline_id)
+        )
+        outline = outline_result.scalar_one_or_none()
+        if outline:
+            chapter_dict["outline_title"] = outline.title
+            chapter_dict["outline_order"] = outline.order_index
+        else:
+            chapter_dict["outline_title"] = None
+            chapter_dict["outline_order"] = None
+    else:
+        chapter_dict["outline_title"] = None
+        chapter_dict["outline_order"] = None
+        
+    return chapter_dict
 
 
 @router.get("/project/{project_id}", response_model=ChapterListResponse, summary="获取项目的所有章节")
@@ -207,7 +240,39 @@ async def get_chapter(
     user_id = getattr(request.state, 'user_id', None)
     await verify_project_access(chapter.project_id, user_id, db)
     
-    return chapter
+    # 填充大纲信息
+    chapter_dict = {
+        "id": chapter.id,
+        "project_id": chapter.project_id,
+        "chapter_number": chapter.chapter_number,
+        "title": chapter.title,
+        "content": chapter.content,
+        "summary": chapter.summary,
+        "word_count": chapter.word_count,
+        "status": chapter.status,
+        "outline_id": chapter.outline_id,
+        "sub_index": chapter.sub_index,
+        "expansion_plan": chapter.expansion_plan,
+        "created_at": chapter.created_at,
+        "updated_at": chapter.updated_at,
+    }
+    
+    if chapter.outline_id:
+        outline_result = await db.execute(
+            select(Outline).where(Outline.id == chapter.outline_id)
+        )
+        outline = outline_result.scalar_one_or_none()
+        if outline:
+            chapter_dict["outline_title"] = outline.title
+            chapter_dict["outline_order"] = outline.order_index
+        else:
+            chapter_dict["outline_title"] = None
+            chapter_dict["outline_order"] = None
+    else:
+        chapter_dict["outline_title"] = None
+        chapter_dict["outline_order"] = None
+        
+    return chapter_dict
 
 
 @router.get("/{chapter_id}/navigation", summary="获取章节导航信息")
@@ -328,7 +393,40 @@ async def update_chapter(
 
     await db.commit()
     await db.refresh(chapter)
-    return chapter
+    
+    # 填充大纲信息
+    chapter_dict = {
+        "id": chapter.id,
+        "project_id": chapter.project_id,
+        "chapter_number": chapter.chapter_number,
+        "title": chapter.title,
+        "content": chapter.content,
+        "summary": chapter.summary,
+        "word_count": chapter.word_count,
+        "status": chapter.status,
+        "outline_id": chapter.outline_id,
+        "sub_index": chapter.sub_index,
+        "expansion_plan": chapter.expansion_plan,
+        "created_at": chapter.created_at,
+        "updated_at": chapter.updated_at,
+    }
+    
+    if chapter.outline_id:
+        outline_result = await db.execute(
+            select(Outline).where(Outline.id == chapter.outline_id)
+        )
+        outline = outline_result.scalar_one_or_none()
+        if outline:
+            chapter_dict["outline_title"] = outline.title
+            chapter_dict["outline_order"] = outline.order_index
+        else:
+            chapter_dict["outline_title"] = None
+            chapter_dict["outline_order"] = None
+    else:
+        chapter_dict["outline_title"] = None
+        chapter_dict["outline_order"] = None
+        
+    return chapter_dict
 
 
 @router.delete("/{chapter_id}", summary="删除章节")

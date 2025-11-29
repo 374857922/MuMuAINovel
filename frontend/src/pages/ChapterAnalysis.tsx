@@ -9,9 +9,10 @@ import {
   UnorderedListOutlined,
 } from '@ant-design/icons';
 import { useParams } from 'react-router-dom';
-import api from '../services/api';
+import api, { termApi } from '../services/api';
 import AnnotatedText, { type MemoryAnnotation } from '../components/AnnotatedText';
 import MemorySidebar from '../components/MemorySidebar';
+import type { Term } from '../types/index';
 
 interface ChapterItem {
   id: string;
@@ -76,6 +77,7 @@ const ChapterAnalysis: React.FC = () => {
   const [scrollToContentAnnotation, setScrollToContentAnnotation] = useState<string | undefined>();
   const [scrollToSidebarAnnotation, setScrollToSidebarAnnotation] = useState<string | undefined>();
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [projectTerms, setProjectTerms] = useState<Term[]>([]); // 新增项目词条状态
 
   // 监听窗口大小变化
   useEffect(() => {
@@ -121,16 +123,22 @@ const ChapterAnalysis: React.FC = () => {
     try {
       setContentLoading(true);
       
-      const [chapterResponse, annotationsResponse, navigationResponse] = await Promise.all([
-        api.get(`/chapters/${chapterId}`),
+      // 1. 首先加载章节内容以获取 project_id
+      const chapterResponse = await api.get(`/chapters/${chapterId}`);
+      const chapterData = chapterResponse.data || chapterResponse;
+      
+      // 2. 并行加载其他数据（标注、导航、词条）
+      const [annotationsResponse, navigationResponse, termsResponse] = await Promise.all([
         api.get(`/chapters/${chapterId}/annotations`).catch(() => null),
         api.get(`/chapters/${chapterId}/navigation`).catch(() => null),
+        termApi.getProjectTerms(chapterData.project_id).catch(() => ({ items: [] })),
       ]);
 
       // 提取 data 属性
-      setSelectedChapter(chapterResponse.data || chapterResponse);
+      setSelectedChapter(chapterData);
       setAnnotationsData(annotationsResponse ? (annotationsResponse.data || annotationsResponse) : null);
       setNavigation(navigationResponse ? (navigationResponse.data || navigationResponse) : null);
+      setProjectTerms(termsResponse?.items || []); // 设置项目词条
     } catch (error) {
       console.error('加载章节内容失败:', error);
       message.error('加载章节内容失败');
@@ -468,6 +476,7 @@ const ChapterAnalysis: React.FC = () => {
                       <AnnotatedText
                         content={selectedChapter.content}
                         annotations={annotationsData.annotations}
+                        projectTerms={projectTerms} // 传递项目词条
                         onAnnotationClick={(annotation) => handleAnnotationClick(annotation, 'content')}
                         activeAnnotationId={activeAnnotationId}
                         scrollToAnnotation={scrollToContentAnnotation}

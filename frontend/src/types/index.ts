@@ -612,6 +612,32 @@ export interface TriggerAnalysisResponse {
   message: string;
 }
 
+// 百科词条类型定义
+export interface Term {
+  id: string;
+  project_id: string;
+  name: string;
+  description?: string;
+  created_by?: string;
+  created_at: string;
+}
+
+export interface TermCreate {
+  project_id: string;
+  name: string;
+  description?: string;
+}
+
+export interface TermUpdate {
+  name?: string;
+  description?: string;
+}
+
+export interface TermListResponse {
+  total: number;
+  items: Term[];
+}
+
 // MCP 插件类型定义 - 优化后只包含必要字段
 export interface MCPPlugin {
   id: string;

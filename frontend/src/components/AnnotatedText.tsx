@@ -1,5 +1,6 @@
 import React, { useMemo, useEffect, useRef } from 'react';
-import { Tooltip } from 'antd';
+import { Tooltip, Popover } from 'antd'; // 导入 Popover
+import type { Term } from '../types/index'; // 显式使用 type 导入，并指定具体文件
 
 // 标注数据类型
 export interface MemoryAnnotation {
@@ -21,15 +22,17 @@ export interface MemoryAnnotation {
 
 // 文本片段类型
 interface TextSegment {
-  type: 'text' | 'annotated';
+  type: 'text' | 'memory_annotated' | 'term_annotated'; // 更新类型
   content: string;
-  annotation?: MemoryAnnotation;
-  annotations?: MemoryAnnotation[]; // 🔧 支持多个标注
+  memoryAnnotation?: MemoryAnnotation; // 单个记忆标注
+  memoryAnnotations?: MemoryAnnotation[]; // 🔧 支持多个记忆标注
+  term?: Term; // 词条标注
 }
 
 interface AnnotatedTextProps {
   content: string;
   annotations: MemoryAnnotation[];
+  projectTerms: Term[]; // 新增：项目词条
   onAnnotationClick?: (annotation: MemoryAnnotation) => void;
   activeAnnotationId?: string;
   scrollToAnnotation?: string;
@@ -59,6 +62,7 @@ const TYPE_ICONS = {
 const AnnotatedText: React.FC<AnnotatedTextProps> = ({
   content,
   annotations,
+  projectTerms, // 解构 projectTerms
   onAnnotationClick,
   activeAnnotationId,
   scrollToAnnotation,
@@ -98,100 +102,99 @@ const AnnotatedText: React.FC<AnnotatedTextProps> = ({
     
     // 按位置排序
     return validAnnotations.sort((a, b) => a.position - b.position);
-  }, [annotations, content]);
+  }, [annotations, content, projectTerms]); // 增加 projectTerms 依赖
 
   // 将文本分割为带标注的片段
   const segments = useMemo(() => {
-    if (processedAnnotations.length === 0) {
-      return [{ type: 'text' as const, content }];
+    if (!content) return [];
+
+    const combinedAnnotations: Array<{
+      start: number;
+      end: number;
+      type: 'memory' | 'term';
+      data: MemoryAnnotation | Term;
+    }> = [];
+
+    // 1. 处理 Memory Annotations
+    if (processedAnnotations.length > 0) {
+      for (const annotation of processedAnnotations) {
+        const { position, length } = annotation;
+        const actualLength = length > 0 ? length : annotation.content.length; // 如果长度为0，用内容长度代替
+        if (position >= 0 && position < content.length && actualLength > 0) {
+          combinedAnnotations.push({
+            start: position,
+            end: position + actualLength,
+            type: 'memory',
+            data: annotation,
+          });
+        } else {
+          console.warn("Invalid memory annotation position or length:", annotation);
+        }
+      }
     }
+
+    // 2. 处理 Term Annotations (Markdown [[term]])
+    const TERM_REGEX = /\[\[([^\]]+)\]\]/g;
+    let match;
+    while ((match = TERM_REGEX.exec(content)) !== null) {
+      const fullMatch = match[0]; // [[词条名称]]
+      const termName = match[1]; // 词条名称
+      const start = match.index;
+      const end = match.index + fullMatch.length;
+      
+      const foundTerm = projectTerms.find(term => term.name === termName);
+      if (foundTerm) {
+        // 检查是否与现有记忆标注重叠，如果完全重叠则忽略词条标注
+        const isOverlappedByMemory = combinedAnnotations.some(anno => 
+          anno.type === 'memory' &&
+          ((start >= anno.start && start < anno.end) ||
+           (end > anno.start && end <= anno.end) ||
+           (start <= anno.start && end >= anno.end))
+        );
+
+        if (!isOverlappedByMemory) {
+          combinedAnnotations.push({
+            start,
+            end,
+            type: 'term',
+            data: foundTerm,
+          });
+        }
+      }
+    }
+
+    // 3. 排序所有标注（按开始位置）
+    combinedAnnotations.sort((a, b) => a.start - b.start);
 
     const result: TextSegment[] = [];
     let lastPos = 0;
 
-    // 🔧 智能分组：检测重叠和相邻的标注
-    const annotationRanges: Array<{
-      start: number;
-      end: number;
-      annotations: MemoryAnnotation[];
-    }> = [];
-
-    for (const annotation of processedAnnotations) {
-      const { position, length } = annotation;
-      const actualLength = length > 0 ? length : 30;
-      const start = position;
-      const end = position + actualLength;
-
-      // 查找是否有重叠或紧邻的范围
-      const overlappingRange = annotationRanges.find(
-        (range) =>
-          (start >= range.start && start <= range.end) || // 起始点在范围内
-          (end >= range.start && end <= range.end) || // 结束点在范围内
-          (start <= range.start && end >= range.end) || // 完全包含
-          Math.abs(start - range.end) <= 5 || // 紧邻（容差5字符）
-          Math.abs(end - range.start) <= 5
-      );
-
-      if (overlappingRange) {
-        // 合并到现有范围
-        overlappingRange.start = Math.min(overlappingRange.start, start);
-        overlappingRange.end = Math.max(overlappingRange.end, end);
-        overlappingRange.annotations.push(annotation);
-      } else {
-        // 创建新范围
-        annotationRanges.push({
-          start,
-          end,
-          annotations: [annotation],
-        });
-      }
-    }
-
-    // 按起始位置排序
-    annotationRanges.sort((a, b) => a.start - b.start);
-
-    // 🔧 智能分片：将重叠区域分成多个小片段
-    for (const range of annotationRanges) {
+    for (const anno of combinedAnnotations) {
       // 添加前面的普通文本
-      if (range.start > lastPos) {
+      if (anno.start > lastPos) {
         result.push({
           type: 'text',
-          content: content.slice(lastPos, range.start),
+          content: content.slice(lastPos, anno.start),
         });
       }
 
-      if (range.annotations.length === 1) {
-        // 单个标注，直接添加
+      // 添加标注文本
+      if (anno.type === 'memory') {
         result.push({
-          type: 'annotated',
-          content: content.slice(range.start, range.end),
-          annotation: range.annotations[0],
-          annotations: range.annotations,
+          type: 'memory_annotated',
+          content: content.slice(anno.start, anno.end),
+          memoryAnnotation: anno.data as MemoryAnnotation,
+          memoryAnnotations: [anno.data as MemoryAnnotation], // 简化处理，暂时只传单个
         });
-      } else {
-        // 🔧 多个标注：将文本分成多个小片段
-        const totalLength = range.end - range.start;
-        const segmentLength = Math.max(1, Math.floor(totalLength / range.annotations.length));
-
-        // 按重要性排序标注
-        const sortedAnnotations = [...range.annotations].sort((a, b) => b.importance - a.importance);
-
-        for (let i = 0; i < sortedAnnotations.length; i++) {
-          const segmentStart = range.start + i * segmentLength;
-          const segmentEnd = i === sortedAnnotations.length - 1
-            ? range.end
-            : range.start + (i + 1) * segmentLength;
-
-          result.push({
-            type: 'annotated',
-            content: content.slice(segmentStart, segmentEnd),
-            annotation: sortedAnnotations[i],
-            annotations: sortedAnnotations, // 保留所有标注信息
-          });
-        }
+      } else if (anno.type === 'term') {
+        result.push({
+          type: 'term_annotated',
+          content: content.slice(anno.start, anno.end),
+          term: anno.data as Term,
+        });
       }
 
-      lastPos = range.end;
+      lastPos = Math.max(lastPos, anno.end);
     }
 
     // 添加剩余文本
@@ -202,37 +205,81 @@ const AnnotatedText: React.FC<AnnotatedTextProps> = ({
       });
     }
 
-    console.log(`AnnotatedText: 处理${processedAnnotations.length}个标注，生成${result.length}个片段`);
+    console.log(`AnnotatedText: 处理了 ${processedAnnotations.length} 个记忆标注和 ${projectTerms.length} 个词条，生成了 ${result.length} 个片段`);
     return result;
-  }, [content, processedAnnotations]);
+  }, [content, processedAnnotations, projectTerms]);
 
   // 渲染标注片段
   const renderAnnotatedSegment = (segment: TextSegment, index: number) => {
     if (segment.type === 'text') {
       return <span key={index}>{segment.content}</span>;
+    } else if (segment.type === 'term_annotated') {
+      const { term } = segment;
+      if (!term) return null;
+
+      const termContent = term.name; // 显示词条名称，而不是 [[词条名称]]
+
+      const popoverContent = (
+        <div style={{ maxWidth: 300 }}>
+          <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
+            📖 {term.name}
+          </div>
+          <div style={{ fontSize: 12, opacity: 0.9 }}>
+            {term.description || '暂无描述'}
+          </div>
+          <div style={{ marginTop: 8, fontSize: 11, opacity: 0.7 }}>
+            创建于: {new Date(term.created_at).toLocaleDateString()}
+          </div>
+        </div>
+      );
+
+      return (
+        <Popover key={index} content={popoverContent} title={null} placement="top">
+          <span
+            className="term-highlight"
+            style={{
+              position: 'relative',
+              borderBottom: '2px dashed #4096ff',
+              cursor: 'help',
+              transition: 'background-color 0.2s',
+              padding: '2px 0',
+              color: '#0050b3' // 词条使用蓝色字体
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = '#e6f4ff';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+          >
+            {termContent}
+          </span>
+        </Popover>
+      );
     }
 
-    const { annotation, annotations } = segment;
-    if (!annotation) return null;
+    // Original memory annotation rendering logic
+    const { memoryAnnotation, memoryAnnotations } = segment;
+    if (!memoryAnnotation) return null;
 
-    const color = TYPE_COLORS[annotation.type];
-    const icon = TYPE_ICONS[annotation.type];
-    const isActive = activeAnnotationId === annotation.id;
+    const color = TYPE_COLORS[memoryAnnotation.type];
+    const icon = TYPE_ICONS[memoryAnnotation.type];
+    const isActive = activeAnnotationId === memoryAnnotation.id;
 
     // 🔧 工具提示内容：如果有多个标注，显示所有标注信息
     const tooltipContent = (
       <div style={{ maxWidth: 350 }}>
-        {annotations && annotations.length > 1 ? (
+        {memoryAnnotations && memoryAnnotations.length > 1 ? (
           // 多个标注
           <div>
             <div style={{ fontWeight: 'bold', marginBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.3)', paddingBottom: 4 }}>
-              📍 此处有 {annotations.length} 个标注
+              📍 此处有 {memoryAnnotations.length} 个标注
             </div>
-            {annotations.map((ann, idx) => (
+            {memoryAnnotations.map((ann, idx) => (
               <div key={ann.id} style={{
-                marginBottom: idx < annotations.length - 1 ? 8 : 0,
-                paddingBottom: idx < annotations.length - 1 ? 8 : 0,
-                borderBottom: idx < annotations.length - 1 ? '1px solid rgba(255,255,255,0.1)' : 'none'
+                marginBottom: idx < memoryAnnotations.length - 1 ? 8 : 0,
+                paddingBottom: idx < memoryAnnotations.length - 1 ? 8 : 0,
+                borderBottom: idx < memoryAnnotations.length - 1 ? '1px solid rgba(255,255,255,0.1)' : 'none'
               }}>
                 <div style={{ fontWeight: 'bold', marginBottom: 4, fontSize: 13 }}>
                   {TYPE_ICONS[ann.type]} {ann.title}
@@ -251,18 +298,18 @@ const AnnotatedText: React.FC<AnnotatedTextProps> = ({
           // 单个标注
           <div>
             <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
-              {icon} {annotation.title}
+              {icon} {memoryAnnotation.title}
             </div>
             <div style={{ fontSize: 12, opacity: 0.9 }}>
-              {annotation.content.slice(0, 100)}
-              {annotation.content.length > 100 ? '...' : ''}
+              {memoryAnnotation.content.slice(0, 100)}
+              {memoryAnnotation.content.length > 100 ? '...' : ''}
             </div>
             <div style={{ marginTop: 8, fontSize: 11, opacity: 0.7 }}>
-              重要性: {(annotation.importance * 10).toFixed(1)}/10
+              重要性: {(memoryAnnotation.importance * 10).toFixed(1)}/10
             </div>
-            {annotation.tags && annotation.tags.length > 0 && (
+            {memoryAnnotation.tags && memoryAnnotation.tags.length > 0 && (
               <div style={{ marginTop: 4, fontSize: 11 }}>
-                {annotation.tags.map((tag, i) => (
+                {memoryAnnotation.tags.map((tag, i) => (
                   <span
                     key={i}
                     style={{
@@ -287,11 +334,11 @@ const AnnotatedText: React.FC<AnnotatedTextProps> = ({
       <Tooltip key={index} title={tooltipContent} placement="top">
         <span
           ref={(el) => {
-            if (annotation) {
-              annotationRefs.current[annotation.id] = el;
+            if (memoryAnnotation) {
+              annotationRefs.current[memoryAnnotation.id] = el;
             }
           }}
-          data-annotation-id={annotation?.id}
+          data-annotation-id={memoryAnnotation?.id}
           className={`annotated-text ${isActive ? 'active' : ''}`}
           style={{
             position: 'relative',
@@ -301,7 +348,7 @@ const AnnotatedText: React.FC<AnnotatedTextProps> = ({
             transition: 'all 0.2s',
             padding: '2px 0',
           }}
-          onClick={() => onAnnotationClick?.(annotation)}
+          onClick={() => onAnnotationClick?.(memoryAnnotation)}
           onMouseEnter={(e) => {
             e.currentTarget.style.backgroundColor = `${color}33`;
           }}
