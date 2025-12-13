@@ -10,15 +10,18 @@ import {
   LeftOutlined,
   RightOutlined,
   HistoryOutlined,
+  FileSearchOutlined,
 } from '@ant-design/icons';
 import api, { termApi } from '../services/api'; // 导入 termApi
 import AnnotatedText, { type MemoryAnnotation } from '../components/AnnotatedText';
 import MemorySidebar from '../components/MemorySidebar';
 import { ChapterHistoryModal } from '../components/ChapterHistoryModal';
+import StyleAnalysisModal from '../components/StyleAnalysisModal';
 import type { Term } from '../types/index'; // 导入 Term 类型
 
 interface ChapterData {
   id: string;
+  project_id: string;
   chapter_number: number;
   title: string;
   content: string;
@@ -75,6 +78,7 @@ const ChapterReader: React.FC = () => {
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | undefined>();
   const [sidebarVisible, setSidebarVisible] = useState(false);
   const [historyModalVisible, setHistoryModalVisible] = useState(false);
+  const [styleModalVisible, setStyleModalVisible] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [navigation, setNavigation] = useState<NavigationData | null>(null);
@@ -297,6 +301,12 @@ const ChapterReader: React.FC = () => {
 
           <Space>
             <Button
+              icon={<FileSearchOutlined />}
+              onClick={() => setStyleModalVisible(true)}
+            >
+              文风检测
+            </Button>
+            <Button
               icon={<HistoryOutlined />}
               onClick={() => setHistoryModalVisible(true)}
             >
@@ -478,6 +488,20 @@ const ChapterReader: React.FC = () => {
           message.success('已加载历史版本内容');
         }}
       />
+
+      {/* 文风检测弹窗 */}
+      {chapter && (
+        <StyleAnalysisModal
+          visible={styleModalVisible}
+          onClose={() => setStyleModalVisible(false)}
+          chapterId={chapterId!}
+          projectId={chapter.project_id}
+          onContentUpdate={(newContent) => {
+            setChapter({ ...chapter, content: newContent });
+            message.success('内容已更新');
+          }}
+        />
+      )}
     </div>
   );
 };

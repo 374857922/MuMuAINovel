@@ -146,6 +146,7 @@ export class SSEPostClient {
           },
           body: JSON.stringify(this.data),
           signal: this.abortController.signal,
+          credentials: 'include', // 携带cookie用于身份验证
         });
 
         if (!response.ok) {

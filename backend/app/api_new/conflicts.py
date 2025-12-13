@@ -124,6 +124,12 @@ async def extract_entities(
 
     # 全量模式：先清空已有数据
     if mode == "full":
+        # 必须先删除关联的矛盾记录，否则会触发外键约束错误
+        await db.execute(
+            Conflict.__table__.delete().where(Conflict.project_id == project_id)
+        )
+        logger.info(f"全量模式: 已自动清理项目 {project_id} 的关联矛盾记录")
+        
         await db.execute(
             EntitySnapshot.__table__.delete().where(EntitySnapshot.project_id == project_id)
         )

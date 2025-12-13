@@ -21,6 +21,10 @@ class EntitySnapshot(Base):
     property_name = Column(String(100), nullable=False, index=True, comment="属性名: age/location/ability/status")
     property_value = Column(Text, nullable=False, comment="属性值（JSON格式或纯文本）")
     property_type = Column(String(30), comment="属性类型: string/number/boolean/list")
+    
+    # 属性层级 (新算法核心)
+    layer = Column(String(50), default="Intrinsic", comment="属性层级: Intrinsic(固有)/Appearance(表象)/Evaluation(评价)")
+    source_type = Column(String(50), default="Narrator", comment="来源类型: Narrator(旁白)/Character(角色)")
 
     # 来源信息（用于追溯）
     source_chapter_id = Column(String(36), ForeignKey("chapters.id", ondelete="SET NULL"), comment="来源章节ID")

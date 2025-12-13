@@ -194,7 +194,7 @@ class ConflictDetector:
                 snapshot_groups[key] = []
             snapshot_groups[key].append(snapshot)
 
-        # 检测矛盾
+        # 检测同属性矛盾
         conflicts = []
         for key, group_snapshots in snapshot_groups.items():
             if len(group_snapshots) < 2:
@@ -202,8 +202,81 @@ class ConflictDetector:
 
             group_conflicts = await self._detect_in_group(group_snapshots, project_id, db)
             conflicts.extend(group_conflicts)
+            
+        # 检测跨属性矛盾 (新增)
+        cross_conflicts = await self._detect_cross_property_conflicts(snapshots, project_id, db)
+        conflicts.extend(cross_conflicts)
 
         logger.info(f"精准检测完成: 发现 {len(conflicts)} 个真正的矛盾")
+        return conflicts
+
+    async def _detect_cross_property_conflicts(
+        self,
+        snapshots: List[EntitySnapshot],
+        project_id: str,
+        db: AsyncSession
+    ) -> List[Conflict]:
+        """检测跨属性的逻辑矛盾 (如: 既喜欢又讨厌同一个东西)"""
+        conflicts = []
+        
+        # 1. 按实体分组
+        entity_groups: Dict[str, List[EntitySnapshot]] = {}
+        for s in snapshots:
+            if s.entity_id not in entity_groups:
+                entity_groups[s.entity_id] = []
+            entity_groups[s.entity_id].append(s)
+            
+        # 2. 遍历每个实体，检查互斥属性对
+        for entity_id, entity_snapshots in entity_groups.items():
+            # 提取 likes 和 dislikes
+            likes_snapshots = []
+            dislikes_snapshots = []
+            
+            for s in entity_snapshots:
+                prop = s.property_name.lower()
+                # 支持中英文属性名
+                if prop in ['likes', '喜欢', '喜好', '爱好', 'love']:
+                    likes_snapshots.append(s)
+                elif prop in ['dislikes', '讨厌', '厌恶', '憎恨', 'hate']:
+                    dislikes_snapshots.append(s)
+            
+            if not likes_snapshots or not dislikes_snapshots:
+                continue
+                
+            # 3. 检查冲突
+            for like_s in likes_snapshots:
+                for dislike_s in dislikes_snapshots:
+                    # 标准化值进行比较
+                    val_like = normalize_text(like_s.property_value)
+                    val_dislike = normalize_text(dislike_s.property_value)
+                    
+                    # 检查是否包含或相等 (例如 "苹果" vs "吃苹果")
+                    # 注意：normalize_text 已经去除了标点和空格
+                    if (val_like and val_dislike and 
+                       (val_like == val_dislike or val_like in val_dislike or val_dislike in val_like)):
+                        
+                        # 发现矛盾！
+                        conflict = Conflict(
+                            project_id=project_id,
+                            entity_type=like_s.entity_type,
+                            entity_id=like_s.entity_id,
+                            entity_name=like_s.entity_name,
+                            property_name="logic_conflict", # 特殊属性名
+                            property_display="逻辑冲突",
+                            snapshot_a_id=like_s.id,
+                            snapshot_a_value=f"喜欢: {like_s.property_value}",
+                            snapshot_a_source=like_s.source_chapter_id,
+                            snapshot_b_id=dislike_s.id,
+                            snapshot_b_value=f"讨厌: {dislike_s.property_value}",
+                            snapshot_b_source=dislike_s.source_chapter_id,
+                            conflict_type="logical_contradiction",
+                            severity="critical",
+                            description=f"【{like_s.entity_name}】存在逻辑矛盾：既喜欢又讨厌「{like_s.property_value}」",
+                            confidence=min(like_s.confidence, dislike_s.confidence),
+                            ai_suggestion="请确认该角色对该事物的真实态度，或是否存在爱恨交织的特殊设定"
+                        )
+                        conflicts.append(conflict)
+                        
         return conflicts
 
     async def _detect_in_group(
@@ -260,19 +333,40 @@ class ConflictDetector:
         project_id: str,
         db: AsyncSession
     ) -> Optional[Conflict]:
-        """精准判断两个值是否矛盾"""
+        """精准判断两个值是否矛盾（支持多维属性分层）"""
+        
+        # === 核心革新：基于层级的过滤逻辑 ===
+        layer_a = getattr(snapshot_a, 'layer', 'Intrinsic')
+        layer_b = getattr(snapshot_b, 'layer', 'Intrinsic')
+        
+        # 1. 如果任意一个是 Evaluation (评价)，且不完全相等
+        #    评价通常是主观的，除非是同一个来源在短时间内自相矛盾，否则通常不视为客观矛盾
+        if layer_a == 'Evaluation' or layer_b == 'Evaluation':
+            # 如果来源不同（例如反派A vs 反派B，或者 反派A vs 旁白），直接忽略
+            if snapshot_a.source_quote != snapshot_b.source_quote: # 简单判断来源
+                 return None
+
+        # 2. Appearance (表象) vs Intrinsic (真相) -> 绝对允许不一致
+        #    这是"扮猪吃老虎"或"伪装"的经典场景
+        if {layer_a, layer_b} == {'Appearance', 'Intrinsic'}:
+            logger.debug(f"跳过检测: {snapshot_a.entity_name} 表象 vs 真相 (可能是伪装)")
+            return None
+
+        # 3. 如果都是 Intrinsic (真相)，则必须严格一致
+        #    这是真正的逻辑矛盾
+        
         value_a = snapshot_a.property_value
         value_b = snapshot_b.property_value
         
-        # 1. 高相似度 = 不矛盾（可能是同义表达）
+        # 4. 高相似度 = 不矛盾（可能是同义表达）
         similarity = semantic_similarity(value_a, value_b)
         if similarity > 0.7:
             return None
         
-        # 2. 检查是否为互斥值
+        # 5. 检查是否为互斥值
         is_exclusive = self._check_mutually_exclusive(value_a, value_b)
         
-        # 3. 数值类属性特殊处理
+        # 6. 数值类属性特殊处理
         if self._is_numeric_property(property_name):
             num_a = extract_number(value_a)
             num_b = extract_number(value_b)
@@ -293,21 +387,23 @@ class ConflictDetector:
                     if avg > 0 and abs(num_a - num_b) / avg < 0.1:
                         return None
         
-        # 4. 如果不是互斥值，且相似度在中等范围，可能只是不同描述
+        # 7. 如果不是互斥值，且相似度在中等范围，可能只是不同描述
         if not is_exclusive and similarity > 0.4:
             return None
         
-        # 5. 使用AI二次验证（如果可用）
+        # 8. 使用AI二次验证（如果可用）
         if self.ai_service and not is_exclusive:
             is_conflict, reason = await self._verify_with_ai(snapshot_a, snapshot_b, property_name)
             if not is_conflict:
                 logger.debug(f"AI判定非矛盾: {snapshot_a.entity_name}.{property_name} - {reason}")
                 return None
         
-        # 6. 确认是矛盾，创建记录
+        # 9. 确认是矛盾，创建记录
         severity = "critical" if is_exclusive else "warning"
         
-        description = f"【{snapshot_a.entity_name}】的{property_name}存在矛盾：「{value_a[:30]}」vs「{value_b[:30]}」"
+        # 调整描述，增加层级信息
+        description = f"【{snapshot_a.entity_name}】的{property_name}存在矛盾：" \
+                      f"「{value_a[:30]}」({layer_a}) vs 「{value_b[:30]}」({layer_b})"
         
         conflict = Conflict(
             project_id=project_id,

@@ -21,7 +21,7 @@ from app.models import (
     Settings, WritingStyle, ProjectDefaultStyle,
     RelationshipType, CharacterRelationship, Organization, OrganizationMember,
     StoryMemory, PlotAnalysis, AnalysisTask, BatchGenerationTask,
-    RegenerationTask
+    RegenerationTask, AIVocabulary, ChapterToneAnalysis, ProjectPatternAnalysis, RewriteRecord
 )
 # 导入新功能模型（设定追溯与矛盾检测、章节关系图谱）
 from app.models_new import EntitySnapshot, Conflict, ChapterLink, ThinkingChain

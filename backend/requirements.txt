@@ -36,3 +36,6 @@ transformers==4.57.1
 
 # Sentence Transformers（更新到最新稳定版本以修复 FutureWarning）
 sentence-transformers==5.1.2
+
+# 中文分词（文风分析）
+jieba==0.42.1

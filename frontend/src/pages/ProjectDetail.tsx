@@ -17,6 +17,7 @@ import {
   BugOutlined,
   RadarChartOutlined,
   ClockCircleOutlined,
+  LineChartOutlined,
 } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useCharacterSync, useOutlineSync, useChapterSync } from '../store/hooks';
@@ -147,6 +148,11 @@ export default function ProjectDetail() {
       label: <Link to={`/project/${projectId}/writing-styles`}>写作风格</Link>,
     },
     {
+      key: 'pattern-analysis',
+      icon: <LineChartOutlined />,
+      label: <Link to={`/project/${projectId}/pattern-analysis`}>套路化分析</Link>,
+    },
+    {
       key: 'wiki',
       icon: <BookOutlined />,
       label: <Link to={`/project/${projectId}/wiki`}>项目百科</Link>,
@@ -170,6 +176,7 @@ export default function ProjectDetail() {
     if (path.includes('/conflict-detection')) return 'conflict-detection';
     if (path.includes('/chapter-graph')) return 'chapter-graph';
     if (path.includes('/writing-styles')) return 'writing-styles';
+    if (path.includes('/pattern-analysis')) return 'pattern-analysis';
     if (path.includes('/wiki')) return 'wiki'; // 新增百科词条选中逻辑
     return 'outline';
   }, [location.pathname]);

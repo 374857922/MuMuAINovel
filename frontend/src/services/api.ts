@@ -816,3 +816,210 @@ export const aiChatApi = {
     use_mcp?: boolean;
   }, options?: SSEClientOptions) => ssePost('/api/ai/chat', data, options)
 };
+
+// 文风检测 API
+export interface ToneIssue {
+  type: string;
+  severity: string;
+  word?: string;
+  category?: string;
+  count?: number;
+  positions?: Array<{ start: number; end: number; context: string }>;
+  alternatives?: string[];
+  description?: string;
+  message?: string;
+  suggestion?: string;
+}
+
+export interface ToneAnalyzeResponse {
+  score: number;
+  level: string;
+  issue_count: number;
+  issues: ToneIssue[];
+  stats: {
+    word_count: number;
+    sentence_count: number;
+    avg_sentence_length: number;
+    sentence_length_std: number;
+  };
+  summary: string;
+}
+
+export interface VocabularyItem {
+  id: string;
+  word: string;
+  category: string;
+  severity: string;
+  alternatives: string[];
+  description?: string;
+  usage_count: number;
+  is_system: number;
+}
+
+// 套路化分析相关类型
+export interface PatternItem {
+  template: string;
+  count: number;
+  examples: string[];
+  chapters: number[];
+  is_opening_pattern: boolean;
+  is_ending_pattern: boolean;
+}
+
+export interface OpeningExample {
+  chapter: number;
+  text: string;
+}
+
+export interface OpeningAnalysis {
+  total_chapters: number;
+  categories: Record<string, number>;
+  examples: Record<string, OpeningExample[]>;
+  dominant_type: string;
+  dominant_count: number;
+  dominant_ratio: number;
+  is_monotonous: boolean;
+  suggestion: string;
+}
+
+export interface EmotionExpressionData {
+  expressions: [string, number][];
+  total_count: number;
+  unique_count: number;
+  concentration: number;
+  top_expression: string | null;
+  top_count: number;
+}
+
+export interface EmotionDiversity {
+  emotions: Record<string, EmotionExpressionData>;
+  diversity_score: number;
+  total_expressions: number;
+  total_unique: number;
+  most_concentrated_emotion: string | null;
+  suggestion: string;
+}
+
+export interface PatternAnalysisResponse {
+  status: string;
+  score?: number;
+  level?: string;
+  chapters_analyzed?: number;
+  patterns_found?: number;
+  top_patterns?: PatternItem[];
+  opening_analysis?: OpeningAnalysis;
+  emotion_diversity?: EmotionDiversity;
+  suggestions?: string[];
+  message?: string;
+  current_chapters?: number;
+}
+
+export const styleApi = {
+  // 分析文风
+  analyzeTone: (data: { text?: string; chapter_id?: string; project_id?: string }) =>
+    api.post<unknown, ToneAnalyzeResponse>('/style/analyze-tone', data),
+
+  // 获取章节的检测结果
+  getAnalysis: (chapterId: string) =>
+    api.get<unknown, { has_analysis: boolean; analysis?: ToneAnalyzeResponse }>(`/style/analysis/${chapterId}`),
+
+  // 获取词汇库
+  getVocabulary: (category?: string) =>
+    api.get<unknown, { total: number; items: VocabularyItem[] }>('/style/vocabulary', { params: { category } }),
+
+  // 添加自定义词汇
+  addVocabulary: (data: {
+    word: string;
+    category?: string;
+    severity?: string;
+    alternatives?: string[];
+    description?: string;
+  }) => api.post<unknown, VocabularyItem>('/style/vocabulary', data),
+
+  // 删除词汇
+  deleteVocabulary: (vocabId: string) =>
+    api.delete<unknown, { message: string }>(`/style/vocabulary/${vocabId}`),
+
+  // 批量替换
+  replaceWords: (data: {
+    chapter_id: string;
+    replacements: Array<{
+      original: string;
+      replacement: string;
+      position?: { start: number; end: number };
+    }>;
+  }) => api.post<unknown, { success: boolean; replaced_count: number; new_content: string }>('/style/replace', data),
+
+  // 初始化词汇库
+  initVocabulary: () => api.post<unknown, { message: string }>('/style/init-vocabulary'),
+
+  // 套路化分析（跨章节）
+  analyzePatterns: (projectId: string, minChapters?: number) =>
+    api.post<unknown, PatternAnalysisResponse>(`/style/analyze-patterns/${projectId}`, null, {
+      params: minChapters ? { min_chapters: minChapters } : undefined,
+    }),
+
+  // 获取套路化分析结果
+  getPatterns: (projectId: string) =>
+    api.get<unknown, PatternAnalysisResponse>(`/style/patterns/${projectId}`),
+
+  // ============ 智能改写 API ============
+
+  // 流式改写文本
+  rewriteStream: (
+    data: {
+      text: string;
+      chapter_id?: string;
+      project_id?: string;
+      rewrite_type?: 'replace' | 'rewrite' | 'restructure';
+      issue?: {
+        word?: string;
+        alternatives?: string[];
+        description?: string;
+      };
+      context?: string;
+      style_sample?: string;
+      banned_words?: string[];
+    },
+    options?: SSEClientOptions
+  ) =>
+    ssePost<{ original: string; rewritten: string; record_id?: string }>(
+      '/api/style/rewrite-stream',
+      data,
+      options
+    ),
+
+  // 获取改写历史
+  getRewriteHistory: (projectId: string, chapterId?: string, limit?: number) =>
+    api.get<
+      unknown,
+      {
+        total: number;
+        items: Array<{
+          id: string;
+          project_id: string;
+          chapter_id?: string;
+          original_text: string;
+          rewritten_text: string;
+          rewrite_type: string;
+          trigger_type: string;
+          status: string;
+          created_at: string;
+        }>;
+      }
+    >(`/style/rewrite-history/${projectId}`, {
+      params: { chapter_id: chapterId, limit },
+    }),
+
+  // 更新改写记录状态
+  updateRewriteStatus: (recordId: string, status: 'accepted' | 'rejected') =>
+    api.put<unknown, { message: string; record: any }>(`/style/rewrite-record/${recordId}/status`, {
+      status,
+    }),
+
+  // 应用改写到章节
+  applyRewrite: (recordId: string) =>
+    api.post<unknown, { message: string; chapter_id: string; new_content_preview: string }>(
+      `/style/apply-rewrite/${recordId}`
+    ),
+};

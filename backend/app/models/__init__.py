@@ -15,6 +15,7 @@ from app.models.mcp_plugin import MCPPlugin
 from app.models.user import User, UserPassword
 from app.models.regeneration_task import RegenerationTask
 from app.models.chapter_version import ChapterVersion
+from app.models.ai_vocabulary import AIVocabulary, ChapterToneAnalysis, ProjectPatternAnalysis, RewriteRecord
 
 __all__ = [
     "Project",
@@ -37,5 +38,9 @@ __all__ = [
     "User",
     "UserPassword",
     "RegenerationTask",
-    "ChapterVersion"
+    "ChapterVersion",
+    "AIVocabulary",
+    "ChapterToneAnalysis",
+    "ProjectPatternAnalysis",
+    "RewriteRecord"
 ]

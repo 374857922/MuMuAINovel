@@ -141,7 +141,7 @@ class EntityExtractor:
         ai_model: str = None
     ) -> List[EntitySnapshot]:
         """
-        从单个章节提取所有实体快照
+        从单个章节提取所有实体快照 (混合模式：AI + 规则)
 
         Args:
             chapter: 章节对象
@@ -158,14 +158,41 @@ class EntityExtractor:
         # 获取项目已有角色用于关联
         characters = await self._get_project_characters(chapter.project_id, db)
 
+        ai_snapshots = []
         # 优先用AI提取
         if self.ai_service:
-            snapshots = await self._extract_with_ai(chapter, characters, ai_provider, ai_model)
-            if snapshots:
-                return snapshots
+            ai_snapshots = await self._extract_with_ai(chapter, characters, ai_provider, ai_model)
         
-        # 降级为规则匹配
-        return await self._extract_with_rules(chapter, characters, db)
+        # 总是运行规则提取（作为补充，特别是正则提取的喜好/厌恶）
+        rule_snapshots = await self._extract_with_rules(chapter, characters, db)
+        
+        # 合并结果（简单去重）
+        final_snapshots = ai_snapshots.copy()
+        existing_keys = set()
+        
+        # 记录 AI 提取的 key
+        for s in ai_snapshots:
+            # 归一化 value 避免微小差异导致的重复
+            val = str(s.property_value).strip().lower()
+            key = f"{s.entity_id}:{s.property_name}:{val}"
+            existing_keys.add(key)
+            
+        # 合并规则提取的 key
+        for s in rule_snapshots:
+            val = str(s.property_value).strip().lower()
+            key = f"{s.entity_id}:{s.property_name}:{val}"
+            
+            # 如果 AI 没提取过这个属性值，或者属性名完全不同（如 likes vs 喜好）
+            # 注意：如果 AI 提取了 "喜好:苹果"，规则提取了 "likes:苹果"，我们希望都保留？
+            # 还是说我们已经在 Prompt 里统一了属性名？
+            # 规则提取的属性名是固定的 (age, gender, likes, dislikes, name, description)。
+            # AI 提取的属性名可能变化。
+            
+            if key not in existing_keys:
+                final_snapshots.append(s)
+                existing_keys.add(key)
+                
+        return final_snapshots
 
     async def _extract_with_ai(
         self,
@@ -187,25 +214,37 @@ class EntityExtractor:
 章节内容：
 {chapter.content[:3000]}
 
-请提取以下类型的设定信息：
-1. 角色属性：年龄、性别、外貌、性格、能力、身份、状态变化
+请提取以下类型的设定信息，并区分属性层级：
+1. 角色属性：年龄、性别、外貌、性格、能力、当前身份(Identity)、出身背景(Background)、状态变化、喜好、厌恶、习惯
 2. 地点信息：地点名称、位置描述、特征
 3. 物品设定：物品名称、功能、归属
 4. 世界规则：法则、制度、限制
 
+属性层级说明：
+- Intrinsic: 固有设定/真相（如：他是穿越者，真实性别）
+- Appearance: 外在表象/伪装（如：看着像乞丐，化名，易容）
+- Evaluation: 他人评价/主观认知（如：村民觉得他是神仙，反派认为他是垃圾）
+
+特别注意：
+- 穿越/重生前的身份（如：大学生、特种兵、现代人）请归类为 "background" (出身背景)。
+- 当前世界的身份（如：王妃、宗主、废柴）请归类为 "identity" (当前身份)。
+
 请用JSON格式返回，每个设定包含：
 - type: "character"/"location"/"item"/"rule"
-- name: 实体名称（角色请使用已定义的名称）
-- property: 属性名（age/gender/appearance/ability/location等）
+- name: 实体名称
+- property: 属性名
 - value: 属性值
-- quote: 原文引用（简短）
+- layer: "Intrinsic"/"Appearance"/"Evaluation" (默认 Intrinsic)
+- source_type: "Narrator"(旁白) 或 "Character"(特定角色名)
+- quote: 原文引用
 - confidence: 置信度(0-1)
 
 返回格式：
 ```json
 [
-  {{"type": "character", "name": "张三", "property": "age", "value": "25", "quote": "张三今年二十五岁", "confidence": 0.9}},
-  ...
+  {{"type": "character", "name": "秦晚晚", "property": "background", "value": "刚毕业的大学生", "layer": "Intrinsic", "source_type": "Narrator", "quote": "穿越前只是个刚毕业的大学生", "confidence": 0.9}},
+  {{"type": "character", "name": "秦晚晚", "property": "identity", "value": "王妃", "layer": "Intrinsic", "source_type": "Narrator", "quote": "如今却是这王府的女主人", "confidence": 0.9}},
+  {{"type": "character", "name": "张三", "property": "age", "value": "18", "layer": "Appearance", "source_type": "Narrator", "quote": "看着约莫十八岁", "confidence": 0.9}}
 ]
 ```
 
@@ -214,6 +253,8 @@ class EntityExtractor:
         try:
             result = await self.ai_service.generate_text(
                 prompt=prompt,
+                provider=ai_provider,
+                model=ai_model,
                 temperature=0.3
             )
 
@@ -245,6 +286,8 @@ class EntityExtractor:
                     property_name=entity_data.get("property", "description"),
                     property_value=self._format_value(entity_data.get("value", "")),
                     property_type=self._detect_type(entity_data.get("value", "")),
+                    layer=entity_data.get("layer", "Intrinsic"),
+                    source_type=entity_data.get("source_type", "Narrator"),
                     source_chapter_id=chapter.id,
                     source_quote=entity_data.get("quote", "")[:200],
                     source_context="",
@@ -272,6 +315,9 @@ class EntityExtractor:
 
         # 提取角色属性
         snapshots.extend(self._extract_character_attrs(chapter, characters, seen_entities))
+        
+        # 提取喜好/厌恶 (新增)
+        snapshots.extend(self._extract_preferences(chapter, characters, seen_entities))
 
         # 提取地点
         snapshots.extend(self._extract_locations(chapter, seen_entities))
@@ -385,6 +431,66 @@ class EntityExtractor:
                 except Exception:
                     continue
 
+        return snapshots
+
+    def _extract_preferences(
+        self, 
+        chapter: Chapter, 
+        characters: List[Character],
+        seen: set
+    ) -> List[EntitySnapshot]:
+        """提取角色喜好/厌恶 (正则增强)"""
+        snapshots = []
+        content = chapter.content
+        
+        # 喜好模式
+        # 例如: "张三最喜欢吃苹果", "李四讨厌下雨"
+        pref_patterns = [
+            (r'([\u4e00-\u9fa5]{2,4})(?:最?喜欢|最?爱|沉迷|钟爱)(?:吃|喝|玩|看)?([\u4e00-\u9fa5]{2,10})', "like"),
+            (r'([\u4e00-\u9fa5]{2,4})(?:最?讨厌|最?恨|厌恶|反感)(?:吃|喝|玩|看)?([\u4e00-\u9fa5]{2,10})', "dislike"),
+        ]
+
+        for pattern, pref_type in pref_patterns:
+            for match in re.finditer(pattern, content):
+                try:
+                    name = match.group(1)
+                    item = match.group(2)
+                    
+                    # 简单过滤：如果名字包含非人称代词，跳过
+                    if any(w in name for w in ['什么', '这个', '那个', '因为', '所以']):
+                        continue
+                    
+                    matched_char = self._find_matching_character(name, characters)
+                    entity_id = matched_char.id if matched_char else f"char_{name}"
+                    entity_name = matched_char.name if matched_char else name
+                    
+                    prop_name = "likes" if pref_type == "like" else "dislikes"
+                    
+                    key = f"{entity_id}:{prop_name}:{item}"
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    
+                    snapshot = EntitySnapshot(
+                        project_id=chapter.project_id,
+                        entity_type="character",
+                        entity_id=entity_id,
+                        entity_name=entity_name,
+                        property_name=prop_name,
+                        property_value=item,
+                        property_type="string",
+                        layer="Intrinsic", # 默认为固有设定
+                        source_type="Narrator",
+                        source_chapter_id=chapter.id,
+                        source_quote=match.group(0),
+                        source_context=content[max(0, match.start()-20):min(len(content), match.end()+20)],
+                        confidence=0.6, # 正则提取置信度适中
+                        ai_model="rule_based"
+                    )
+                    snapshots.append(snapshot)
+                except Exception:
+                    continue
+                    
         return snapshots
 
     def _extract_locations(self, chapter: Chapter, seen: set) -> List[EntitySnapshot]:

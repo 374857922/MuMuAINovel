@@ -115,3 +115,7 @@ backend/migrate_all_databases.py
 test_api.py
 backend/embedding/models--sentence-transformers--all-MiniLM-L6-v2
 *.zip
+/backend/check_syntax.py
+/backend/check_syntax_v2.py
+/backend/scripts/fix_chapter_version_user_id.py
+test_conflict_*.py

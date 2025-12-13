@@ -14,6 +14,7 @@ import Chapters from './pages/Chapters';
 import ChapterReader from './pages/ChapterReader';
 import ChapterAnalysis from './pages/ChapterAnalysis';
 import WritingStyles from './pages/WritingStyles';
+import PatternAnalysis from './pages/PatternAnalysis';
 import ProjectWiki from './pages/ProjectWiki'; // 导入 ProjectWiki
 import { ConflictDetection } from './pages_new/ConflictDetection';
 import { ChapterGraph } from './pages_new/ChapterGraph';
@@ -59,6 +60,7 @@ function App() {
             <Route path="conflict-detection" element={<ConflictDetection />} />
             <Route path="chapter-graph" element={<ChapterGraph />} />
             <Route path="writing-styles" element={<WritingStyles />} />
+            <Route path="pattern-analysis" element={<PatternAnalysis />} />
             <Route path="wiki" element={<ProjectWiki />} /> {/* 新增项目百科路由 */}
             {/* <Route path="polish" element={<Polish />} /> */}
           </Route>
